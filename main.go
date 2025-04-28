@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
 	"cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
@@ -83,37 +86,20 @@ func PerformTTS(ctx context.Context, client *texttospeech.Client, text string, t
 	return res, err
 }
 
-func PerformTTSAndSaveToFile(ctx context.Context, client *texttospeech.Client, word string, filename string, ttsConfig* TTSConfig) error {
+func PerformTTSAndSaveToFile(ctx context.Context, client *texttospeech.Client, word string, filename string, ttsConfig* TTSConfig) (*string, error) {
 	res, err := PerformTTS(ctx, client, word, ttsConfig)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	filePath := fmt.Sprintf("%s/%s.%s", ttsConfig.OutDir, filename, ttsConfig.OutputFormat)
 
 	err = WriteToFile(filePath, res.AudioContent)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
-}
-
-func PerformBulkTTSAndSaveToFile(ctx context.Context, client *texttospeech.Client, words []string, ttsConfig* TTSConfig) error {
-	for idx := range words {
-		<-rateLimiter(ttsConfig.ReqPerMin)
-		
-		word := words[idx]
-
-		err := PerformTTSAndSaveToFile(ctx, client, word, strconv.Itoa(idx + 1), ttsConfig)
-		if (err != nil) {
-			fmt.Printf("❌ Failed to perform TTS on word %s: %s\n", word, err)
-		} else {
-			fmt.Printf("✅ Performed TTS on word %s:\n", word)
-		}
-	}
-
-	return nil
+	return &filePath, nil
 }
 
 func main() {
@@ -136,6 +122,17 @@ func main() {
 		log.Fatalf("failed to parse [db] from config.toml: %s", err);
 	}
 
+	dbURI := fmt.Sprintf("postgres://%s:%d/%s", dbConfig.Host, dbConfig.Port, dbConfig.Database)
+
+	db, err := sql.Open("pgx", dbURI)
+	if err != nil {
+		log.Fatalf("failed to connect to DB: %s", err)
+	}
+
+	defer db.Close()
+
+	fmt.Printf("connected to DB: %s\n", dbURI)
+
 	if ttsConfig.OutDir != "." {
 		err := os.Mkdir(ttsConfig.OutDir, 0777)
 
@@ -156,7 +153,29 @@ func main() {
 
 	defer client.Close()
 
-	words := []string{"ಕನ್ನಡ", "ಕನ್ನಡ", "ಕನ್ನಡ"}
+	rows, err := db.Query("SELECT id, content FROM entries WHERE initial != '' ORDER BY id")
+	if err != nil {
+		log.Fatalf("failed to fetch rows: %s", err)
+	}
 
-	PerformBulkTTSAndSaveToFile(ctx, client, words, &ttsConfig)
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int;
+		var word string;
+
+		err := rows.Scan(&id, &word)
+		if err != nil {
+			fmt.Printf("failed to scan row")
+			continue
+		}
+
+		filepath, err := PerformTTSAndSaveToFile(ctx, client, word, strconv.Itoa(id), &ttsConfig)
+		if (err != nil) {
+			fmt.Printf("❌ Failed to perform TTS on word %s: %s\n", word, err)
+		} else {
+			fmt.Printf("✅ Performed TTS on word %s: %s\n", word, *filepath)
+		}
+	}
 }
+

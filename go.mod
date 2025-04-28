@@ -4,6 +4,7 @@ go 1.24.1
 
 require (
 	cloud.google.com/go/texttospeech v1.12.1
+	github.com/jackc/pgx/v5 v5.7.4
 	github.com/knadh/koanf v1.5.0
 	google.golang.org/api v0.230.0
 )
@@ -21,6 +22,9 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
