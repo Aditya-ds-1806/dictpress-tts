@@ -1,6 +1,6 @@
 #!/bin/sh
 
-count=10000
+count=${1:-10}
 
 while [ $count != 0 ]
 do
