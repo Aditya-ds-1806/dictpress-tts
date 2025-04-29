@@ -182,15 +182,18 @@ func main() {
 				logger.Printf("failed to scan row")
 				continue
 			}
-	
+
 			wordChannel <- Word{id, word}
 		}
+
+		logger.Println("finished reading all words from DB, closing channel!")
 
 		close(wordChannel)
 	}()
 
 	go func () {
 		defer wg.Done()
+
 		rateLimiter := rate.NewLimiter(rate.Limit(ttsConfig.ReqPerMin), int(ttsConfig.ReqPerMin))
 
 		for word := range wordChannel {
