@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -38,6 +39,11 @@ type TTSConfig struct {
     SpeechRate    float64 `koanf:"speech_rate"`
     Pitch         float64 `koanf:"pitch"`
     VolumeGainDB  float64 `koanf:"volume_gain_db"`
+}
+
+type Word struct {
+	ID int
+	Word string
 }
 
 func rateLimiter(limit int64) <- chan time.Time {
@@ -159,23 +165,45 @@ func main() {
 	}
 
 	defer rows.Close()
+	
+	var wg sync.WaitGroup
+	wg.Add(2)
+	
+	wordChannel := make(chan Word, 1000)
 
-	for rows.Next() {
-		var id int;
-		var word string;
+	go func () {
+		defer wg.Done()
 
-		err := rows.Scan(&id, &word)
-		if err != nil {
-			fmt.Printf("failed to scan row")
-			continue
+		for rows.Next() {
+			var id int;
+			var word string;
+	
+			err := rows.Scan(&id, &word)
+			if err != nil {
+				fmt.Printf("failed to scan row")
+				continue
+			}
+	
+			wordChannel <- Word{id, word}
 		}
 
-		filepath, err := PerformTTSAndSaveToFile(ctx, client, word, strconv.Itoa(id), &ttsConfig)
-		if (err != nil) {
-			fmt.Printf("❌ Failed to perform TTS on word %s: %s\n", word, err)
-		} else {
-			fmt.Printf("✅ Performed TTS on word %s: %s\n", word, *filepath)
+		close(wordChannel)
+	}()
+
+	go func () {
+		defer wg.Done()
+
+		for word := range wordChannel {
+			<-rateLimiter(ttsConfig.ReqPerMin)
+
+			filepath, err := PerformTTSAndSaveToFile(ctx, client, word.Word, strconv.Itoa(word.ID), &ttsConfig)
+			if (err != nil) {
+				fmt.Printf("❌ Failed to perform TTS on word %s: %s\n", word.Word, err)
+			} else {
+				fmt.Printf("✅ Performed TTS on word %s: %s\n", word.Word, *filepath)
+			}
 		}
-	}
+	}()
+
+	wg.Wait()
 }
-
