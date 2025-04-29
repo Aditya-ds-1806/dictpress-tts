@@ -41,12 +41,20 @@ type TTSConfig struct {
     VolumeGainDB  float64 `koanf:"volume_gain_db"`
 }
 
+type Config struct {
+	TTS TTSConfig
+	DB DBConfig
+}
+
 type Word struct {
 	ID int
 	Word string
 }
 
-var logger *log.Logger
+var (
+	logger *log.Logger
+	chBufferSize = 1000
+)
 
 func CreateTTSClient(ctx context.Context, config* TTSConfig) (*texttospeech.Client, error) {
 	if config.APIKey == "" {
@@ -68,7 +76,7 @@ func WriteToFile(filename string, data []byte) error {
 	return err
 }
 
-func PerformTTS(ctx context.Context, client *texttospeech.Client, text string, ttsConfig* TTSConfig) (*texttospeechpb.SynthesizeSpeechResponse, error) {
+func PerformTTS(client *texttospeech.Client, text string, ttsConfig* TTSConfig) (*texttospeechpb.SynthesizeSpeechResponse, error) {
 	req := texttospeechpb.SynthesizeSpeechRequest{
 		Input: &texttospeechpb.SynthesisInput{
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
@@ -85,13 +93,13 @@ func PerformTTS(ctx context.Context, client *texttospeech.Client, text string, t
 		},
 	}
 
-	res, err := client.SynthesizeSpeech(ctx, &req)
+	res, err := client.SynthesizeSpeech(context.Background(), &req)
 
 	return res, err
 }
 
-func PerformTTSAndSaveToFile(ctx context.Context, client *texttospeech.Client, word string, filename string, ttsConfig* TTSConfig) (*string, error) {
-	res, err := PerformTTS(ctx, client, word, ttsConfig)
+func PerformTTSAndSaveToFile(client *texttospeech.Client, word string, filename string, ttsConfig* TTSConfig) (*string, error) {
+	res, err := PerformTTS(client, word, ttsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +114,10 @@ func PerformTTSAndSaveToFile(ctx context.Context, client *texttospeech.Client, w
 	return &filePath, nil
 }
 
-func main() {
+func ParseTomlConf() Config {
 	k := koanf.New(".")
-	logger = log.New(os.Stdout, "dictpress-tts: ", log.Ltime)
-	
 	err := k.Load(file.Provider("config.toml"), toml.Parser())
+
 	if err != nil {
 		logger.Fatalf("failed to load config.toml: %s", err);
 	}
@@ -127,19 +134,22 @@ func main() {
 		logger.Fatalf("failed to parse [db] from config.toml: %s", err);
 	}
 
-	dbURI := fmt.Sprintf("postgres://%s:%d/%s", dbConfig.Host, dbConfig.Port, dbConfig.Database)
-
-	db, err := sql.Open("pgx", dbURI)
-	if err != nil {
-		logger.Fatalf("failed to connect to DB: %s", err)
+	return Config{
+		TTS: ttsConfig,
+		DB: dbConfig,
 	}
+}
 
-	defer db.Close()
+func initApp() (Config, *sql.DB, *texttospeech.Client) {
+	// init logger
+	logger = log.New(os.Stdout, "dictpress-tts: ", log.Ltime)
 
-	logger.Printf("connected to DB: %s\n", dbURI)
+	// parser toml
+	config := ParseTomlConf()
 
-	if ttsConfig.OutDir != "." {
-		err := os.Mkdir(ttsConfig.OutDir, 0777)
+	// init out dir
+	if config.TTS.OutDir != "." {
+		err := os.Mkdir(config.TTS.OutDir, 0777)
 
 		if err != nil {
 			if !os.IsExist(err) {
@@ -150,13 +160,27 @@ func main() {
 		}
 	}
 
-	ctx := context.Background()
-	client, err := CreateTTSClient(ctx, &ttsConfig)
+	// connect to postgres
+	dbURI := fmt.Sprintf("postgres://%s:%d/%s", config.DB.Host, config.DB.Port, config.DB.Database)
+
+	db, err := sql.Open("pgx", dbURI)
+	if err != nil {
+		logger.Fatalf("failed to connect to DB: %s", err)
+	}
+
+	logger.Printf("connected to DB: %s\n", dbURI)
+
+	// create TTS Client
+	ttsClient, err := CreateTTSClient(context.Background(), &config.TTS)
 	if err != nil {
 		logger.Fatalf("failed to create text-to-speech client: %v\n", err)
 	}
 
-	defer client.Close()
+	return config, db, ttsClient
+}
+
+func fetchWordsFromDB(db *sql.DB, wordChannel chan<-Word, wg *sync.WaitGroup) {
+	defer wg.Done()
 
 	rows, err := db.Query("SELECT id, content FROM entries WHERE initial != '' ORDER BY id")
 	if err != nil {
@@ -164,49 +188,55 @@ func main() {
 	}
 
 	defer rows.Close()
+
+	for rows.Next() {
+		var id int;
+		var word string;
+
+		err := rows.Scan(&id, &word)
+		if err != nil {
+			logger.Printf("failed to scan row")
+			continue
+		}
+
+		wordChannel <- Word{id, word}
+	}
+
+	logger.Println("finished reading all words from DB, closing channel!")
+
+	close(wordChannel)
+}
+
+func processWords(ttsClient *texttospeech.Client, ttsConfig *TTSConfig, wordChannel <-chan Word, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	rateLimiter := rate.NewLimiter(rate.Limit(ttsConfig.ReqPerMin), int(ttsConfig.ReqPerMin))
+
+	for word := range wordChannel {
+		rateLimiter.Wait(context.Background())
+
+		filepath, err := PerformTTSAndSaveToFile(ttsClient, word.Word, strconv.Itoa(word.ID), ttsConfig)
+		if (err != nil) {
+			logger.Printf("❌ failed to perform TTS on word %s: %s\n", word.Word, err)
+		} else {
+			logger.Printf("✅ performed TTS on word %s: %s\n", word.Word, *filepath)
+		}
+	}
+}
+
+func main() {
+	config, db, ttsClient := initApp()
+
+	defer db.Close()
+	defer ttsClient.Close()
+
+	wordChannel := make(chan Word, chBufferSize)
 	
 	var wg sync.WaitGroup
 	wg.Add(2)
 	
-	wordChannel := make(chan Word, 1000)
-
-	go func () {
-		defer wg.Done()
-
-		for rows.Next() {
-			var id int;
-			var word string;
-	
-			err := rows.Scan(&id, &word)
-			if err != nil {
-				logger.Printf("failed to scan row")
-				continue
-			}
-
-			wordChannel <- Word{id, word}
-		}
-
-		logger.Println("finished reading all words from DB, closing channel!")
-
-		close(wordChannel)
-	}()
-
-	go func () {
-		defer wg.Done()
-
-		rateLimiter := rate.NewLimiter(rate.Limit(ttsConfig.ReqPerMin), int(ttsConfig.ReqPerMin))
-
-		for word := range wordChannel {
-			rateLimiter.Wait(context.Background())
-
-			filepath, err := PerformTTSAndSaveToFile(ctx, client, word.Word, strconv.Itoa(word.ID), &ttsConfig)
-			if (err != nil) {
-				logger.Printf("❌ failed to perform TTS on word %s: %s\n", word.Word, err)
-			} else {
-				logger.Printf("✅ performed TTS on word %s: %s\n", word.Word, *filepath)
-			}
-		}
-	}()
+	go fetchWordsFromDB(db, wordChannel, &wg)
+	go processWords(ttsClient, &config.TTS, wordChannel, &wg)
 
 	wg.Wait()
 }
