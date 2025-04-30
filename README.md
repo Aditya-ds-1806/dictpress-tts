@@ -4,6 +4,8 @@
 
 [![Build](https://github.com/Aditya-ds-1806/dictpress-tts/actions/workflows/build.yml/badge.svg)](https://github.com/Aditya-ds-1806/dictpress-tts/actions/workflows/build.yml)
 [![release](https://github.com/Aditya-ds-1806/dictpress-tts/actions/workflows/release.yml/badge.svg)](https://github.com/Aditya-ds-1806/dictpress-tts/actions/workflows/release.yml)
+![GitHub Release](https://img.shields.io/github/v/release/Aditya-ds-1806/dictpress-tts)
+
 
 **dictpress-tts** is a fast, portable, text-to-speech utility for [dictpress](https://github.com/knadh/dictpress). It converts word definitions to audio using cloud-based TTS providers.
 
