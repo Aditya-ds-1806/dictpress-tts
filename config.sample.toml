@@ -21,7 +21,7 @@ output_format = "mp3"
 # Directory to save the generated audio files
 out_dir = "tts"
 # Rate limit
-req_per_min = 1000
+req_per_sec = 10
 # Speech rate
 speech_rate = 0.85
 # Pitch
