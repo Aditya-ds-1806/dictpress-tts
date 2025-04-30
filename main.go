@@ -116,13 +116,15 @@ func PerformTTSAndSaveToFile(client *texttospeech.Client, word string, filename 
 	return &filePath, nil
 }
 
-func ParseTomlConf() Config {
+func ParseTomlConf(tomlPath string) Config {
 	k := koanf.New(".")
-	err := k.Load(file.Provider("config.toml"), toml.Parser())
+	err := k.Load(file.Provider(tomlPath), toml.Parser())
 
 	if err != nil {
 		logger.Fatalf("failed to load config.toml: %s", err);
 	}
+
+	logger.Printf("loaded TOML from: %s", tomlPath)
 
 	var ttsConfig TTSConfig
 	err = k.Unmarshal("tts", &ttsConfig)
@@ -188,6 +190,9 @@ func processWords(ttsClient *texttospeech.Client, ttsConfig *TTSConfig, wordChan
 }
 
 func parseCLIArgs() {
+	// toml config
+	flag.String("file", "./config.toml", "Path to dictpress TOML file")
+
 	// Database Config
 	flag.String("db-host", "", "PostgreSQL host")
 	flag.Int("db-port", 0, "PostgreSQL port")
@@ -304,10 +309,31 @@ func initApp() (Config, *sql.DB, *texttospeech.Client) {
 	parseCLIArgs()
 
 	// parser toml
-	config := ParseTomlConf()
+	config := ParseTomlConf(flag.Lookup("file").Value.String())
 
 	// merge toml and cli config
 	resolveConfig(&config)
+
+	// create TTS Client
+	ttsClient, err := CreateTTSClient(context.Background(), &config.TTS)
+	if err != nil {
+		logger.Fatalf("failed to create text-to-speech client: %v\n", err)
+	}
+
+	// connect to postgres
+	dbURI := fmt.Sprintf("postgres://%s:%d/%s", config.DB.Host, config.DB.Port, config.DB.Database)
+
+	db, err := sql.Open("pgx", dbURI)
+	if err != nil {
+		logger.Fatalf("failed to create db client: %s", err)
+	}
+
+	err = db.Ping()
+	if err != nil {
+		logger.Fatalf("failed to connect to DB: %s", err)
+	}
+
+	logger.Printf("connected to DB: %s\n", dbURI)
 
 	// init out dir
 	if config.TTS.OutDir != "." {
@@ -318,25 +344,11 @@ func initApp() (Config, *sql.DB, *texttospeech.Client) {
 				logger.Fatalf("failed to create out dir: %s", err)
 			}
 
-			logger.Println("out dir exists, skipping creation")
+			logger.Printf("out dir: \"%s\" exists, skipping creation", config.TTS.OutDir)
 		}
 	}
 
-	// connect to postgres
-	dbURI := fmt.Sprintf("postgres://%s:%d/%s", config.DB.Host, config.DB.Port, config.DB.Database)
-
-	db, err := sql.Open("pgx", dbURI)
-	if err != nil {
-		logger.Fatalf("failed to connect to DB: %s", err)
-	}
-
-	logger.Printf("connected to DB: %s\n", dbURI)
-
-	// create TTS Client
-	ttsClient, err := CreateTTSClient(context.Background(), &config.TTS)
-	if err != nil {
-		logger.Fatalf("failed to create text-to-speech client: %v\n", err)
-	}
+	printConfig(config.TTS)
 
 	return config, db, ttsClient
 }
@@ -362,7 +374,6 @@ func printConfig(cfg any) {
 
 func main() {
 	config, db, ttsClient := initApp()
-	printConfig(config.TTS)
 
 	defer db.Close()
 	defer ttsClient.Close()
