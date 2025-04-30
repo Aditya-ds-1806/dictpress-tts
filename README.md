@@ -104,9 +104,10 @@ out_dir = "tts"
 req_per_sec = 10 # requests per second, tune it as per the API rate limits
 ```
 
-Make sure your dictpress postgres database is up and running. Once you are ready, run:
+Make sure your dictpress postgres database is up and running. In case you want to seed the DB with dummy data, you can run the `dump` shell script provided in the repository. Once you are ready, run:
 
 ```bash
+$ ./dump 10000 # optional, dumps 10000 dummy rows into postgres entries table
 $ dictpress-tts --file /path/to/config.toml
 ```
 
