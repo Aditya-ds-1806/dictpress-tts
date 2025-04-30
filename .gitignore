@@ -2,3 +2,5 @@
 config.toml
 *.mp3
 dictpress-tts
+# Added by goreleaser init:
+dist/
