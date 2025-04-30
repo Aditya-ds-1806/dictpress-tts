@@ -37,7 +37,7 @@ type TTSConfig struct {
     VoiceName     string  `koanf:"voice_name"`
     OutputFormat  string  `koanf:"output_format"`
     OutDir        string  `koanf:"out_dir"`
-    ReqPerSec     float64   `koanf:"req_per_sec"`
+    ReqPerSec     float64 `koanf:"req_per_sec"`
     SpeechRate    float64 `koanf:"speech_rate"`
     Pitch         float64 `koanf:"pitch"`
     VolumeGainDB  float64 `koanf:"volume_gain_db"`
