@@ -56,7 +56,7 @@ export PATH="$PATH:$(pwd)"
 ```text
 $ dictpress-tts --help
 
-Usage of ./dictpress-tts:
+Usage of dictpress-tts:
   -db-host string
         PostgreSQL host
   -db-name string
@@ -67,6 +67,8 @@ Usage of ./dictpress-tts:
         PostgreSQL port
   -db-user string
         PostgreSQL username
+  -file string
+        Path to dictpress TOML file (default "./config.toml")
   -tts-api-key string
         API key for TTS provider
   -tts-format string
@@ -80,13 +82,17 @@ Usage of ./dictpress-tts:
   -tts-provider string
         TTS provider (e.g., google) (default "google")
   -tts-rate-limit int
-        Max TTS requests per second (default 1000)
+        Max requests per second to the TTS API (default 1000)
   -tts-speed float
         TTS speech rate multiplier (default 1)
   -tts-voice string
         Voice name to use for TTS
   -tts-volume float
         TTS volume gain in dB
+  -version
+        Print dictpress-tts version
+  -workers int
+        Number of concurrent TTS processing workers (default 1)
 ```
 
 ---

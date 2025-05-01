@@ -172,10 +172,12 @@ func fetchWordsFromDB(db *sql.DB, wordChannel chan<-Word, wg *sync.WaitGroup) {
 	close(wordChannel)
 }
 
-func processWords(ttsClient *texttospeech.Client, ttsConfig *TTSConfig, wordChannel <-chan Word, wg *sync.WaitGroup) {
+func processWords(ttsClient *texttospeech.Client, config *Config, wordChannel <-chan Word, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	rateLimiter := rate.NewLimiter(rate.Limit(*ttsConfig.ReqPerSec), int(*ttsConfig.ReqPerSec))
+	ttsConfig := config.TTS
+	reqPerSec := *ttsConfig.ReqPerSec / float64(*config.Workers)
+	rateLimiter := rate.NewLimiter(rate.Limit(reqPerSec), int(reqPerSec))
 
 	for word := range wordChannel {
 		rateLimiter.Wait(context.Background())
@@ -204,7 +206,7 @@ func defineFlags() {
 	flag.String("tts-voice", "", "Voice name to use for TTS")
 	flag.String("tts-format", "mp3", "Audio output format (e.g., mp3, wav)")
 	flag.String("tts-out-dir", "tts", "Directory to save TTS audio files")
-	flag.Int64("tts-rate-limit", 1000, "Max TTS requests per second")
+	flag.Int64("tts-rate-limit", 1000, "Max requests per second to the TTS API")
 	flag.Float64("tts-speed", 1.0, "TTS speech rate multiplier")
 	flag.Float64("tts-pitch", 0.0, "TTS pitch in dB")
 	flag.Float64("tts-volume", 0.0, "TTS volume gain in dB")
@@ -212,7 +214,7 @@ func defineFlags() {
 	// Misc
 	flag.Bool("version", false, "Print dictpress-tts version")
 	flag.String("file", "./config.toml", "Path to dictpress TOML file")
-	flag.Int("workers", 1, "Number of TTS workers")
+	flag.Int("workers", 1, "Number of concurrent TTS processing workers")
 }
 
 func ParseRuntimeFlags() Config {
@@ -337,7 +339,7 @@ func initApp() (Config, *sql.DB, *texttospeech.Client) {
 		os.Exit(0)
 	}
 	
-	// parser toml
+	// parse toml
 	ParseTomlConf(&config)
 
 	// merge toml and cli config
@@ -399,7 +401,7 @@ func printConfig(cfg any) {
 
 	for i := range v.NumField() {
 		field := v.Type().Field(i)
-		value := v.Field(i).Interface()
+		value := v.Field(i).Elem()
 		logger.Printf("%s: %v\n", field.Name, value)
 	}
 
@@ -412,13 +414,16 @@ func main() {
 	defer db.Close()
 	defer ttsClient.Close()
 
+	var wg sync.WaitGroup
 	wordChannel := make(chan Word, chBufferSize)
 	
-	var wg sync.WaitGroup
-	wg.Add(2)
-	
+	wg.Add(1)
 	go fetchWordsFromDB(db, wordChannel, &wg)
-	go processWords(ttsClient, config.TTS, wordChannel, &wg)
+
+	for range *config.Workers {
+		wg.Add(1)
+		go processWords(ttsClient, &config, wordChannel, &wg)
+	}
 
 	wg.Wait()
 }
