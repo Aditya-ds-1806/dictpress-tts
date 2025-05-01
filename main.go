@@ -23,29 +23,32 @@ import (
 )
 
 type DBConfig struct {
-	Host      string `koanf:"host"`
-	Port      int    `koanf:"port"`
-	Database  string `koanf:"db"`
-	Username  string `koanf:"user"`
-	Password  string `koanf:"password"`
+	Host      *string `koanf:"host"`
+	Port      *int    `koanf:"port"`
+	Database  *string `koanf:"db"`
+	Username  *string `koanf:"user"`
+	Password  *string `koanf:"password"`
 }
 
 type TTSConfig struct {
-    Provider      string  `koanf:"provider"`
-    APIKey        string  `koanf:"api_key"`
-    LanguageCode  string  `koanf:"language_code"`
-    VoiceName     string  `koanf:"voice_name"`
-    OutputFormat  string  `koanf:"output_format"`
-    OutDir        string  `koanf:"out_dir"`
-    ReqPerSec     float64 `koanf:"req_per_sec"`
-    SpeechRate    float64 `koanf:"speech_rate"`
-    Pitch         float64 `koanf:"pitch"`
-    VolumeGainDB  float64 `koanf:"volume_gain_db"`
+    Provider      *string  `koanf:"provider"`
+    APIKey        *string  `koanf:"api_key"`
+    LanguageCode  *string  `koanf:"language_code"`
+    VoiceName     *string  `koanf:"voice_name"`
+    OutputFormat  *string  `koanf:"output_format"`
+    OutDir        *string  `koanf:"out_dir"`
+    ReqPerSec     *float64 `koanf:"req_per_sec"`
+    SpeechRate    *float64 `koanf:"speech_rate"`
+    Pitch         *float64 `koanf:"pitch"`
+    VolumeGainDB  *float64 `koanf:"volume_gain_db"`
 }
 
 type Config struct {
-	TTS TTSConfig
-	DB DBConfig
+	TTS *TTSConfig
+	DB *DBConfig
+	Version *bool
+	File *string
+	Workers *int64
 }
 
 type Word struct {
@@ -58,12 +61,16 @@ var (
 	chBufferSize = 1000
 )
 
+func ptr[T any](v T) *T {
+	return &v
+}
+
 func CreateTTSClient(ctx context.Context, config* TTSConfig) (*texttospeech.Client, error) {
-	if config.APIKey == "" {
+	if config.APIKey == nil {
 		logger.Fatalf("API key is required!")
 	}
 
-	return texttospeech.NewClient(ctx, option.WithAPIKey(config.APIKey))
+	return texttospeech.NewClient(ctx, option.WithAPIKey(*config.APIKey))
 }
 
 func WriteToFile(filename string, data []byte) error {
@@ -84,14 +91,14 @@ func PerformTTS(client *texttospeech.Client, text string, ttsConfig* TTSConfig) 
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
 		},
 		Voice: &texttospeechpb.VoiceSelectionParams{
-			Name: ttsConfig.VoiceName,
-			LanguageCode: ttsConfig.LanguageCode,
+			Name: *ttsConfig.VoiceName,
+			LanguageCode: *ttsConfig.LanguageCode,
 		},
 		AudioConfig: &texttospeechpb.AudioConfig{
 			AudioEncoding: texttospeechpb.AudioEncoding_MP3,
-			SpeakingRate: ttsConfig.SpeechRate,
-			Pitch: ttsConfig.Pitch,
-			VolumeGainDb: ttsConfig.VolumeGainDB,
+			SpeakingRate: *ttsConfig.SpeechRate,
+			Pitch: *ttsConfig.Pitch,
+			VolumeGainDb: *ttsConfig.VolumeGainDB,
 		},
 	}
 
@@ -106,7 +113,7 @@ func PerformTTSAndSaveToFile(client *texttospeech.Client, word string, filename 
 		return nil, err
 	}
 
-	filePath := fmt.Sprintf("%s/%s.%s", ttsConfig.OutDir, filename, ttsConfig.OutputFormat)
+	filePath := fmt.Sprintf("%s/%s.%s", *ttsConfig.OutDir, filename, *ttsConfig.OutputFormat)
 
 	err = WriteToFile(filePath, res.AudioContent)
 	if err != nil {
@@ -116,31 +123,24 @@ func PerformTTSAndSaveToFile(client *texttospeech.Client, word string, filename 
 	return &filePath, nil
 }
 
-func ParseTomlConf(tomlPath string) Config {
+func ParseTomlConf(config *Config) {
 	k := koanf.New(".")
-	err := k.Load(file.Provider(tomlPath), toml.Parser())
+	err := k.Load(file.Provider(*config.File), toml.Parser())
 
 	if err != nil {
 		logger.Fatalf("failed to load config.toml: %s", err);
 	}
 
-	logger.Printf("loaded TOML from: %s", tomlPath)
+	logger.Printf("loaded TOML from: %s", *config.File)
 
-	var ttsConfig TTSConfig
-	err = k.Unmarshal("tts", &ttsConfig)
+	err = k.Unmarshal("tts", &config.TTS)
 	if err != nil {
 		logger.Fatalf("failed to parse [tts] from config.toml: %s", err);
 	}
 
-	var dbConfig DBConfig
-	err = k.Unmarshal("db", &dbConfig)
+	err = k.Unmarshal("db", &config.DB)
 	if err != nil {
 		logger.Fatalf("failed to parse [db] from config.toml: %s", err);
-	}
-
-	return Config{
-		TTS: ttsConfig,
-		DB: dbConfig,
 	}
 }
 
@@ -175,7 +175,7 @@ func fetchWordsFromDB(db *sql.DB, wordChannel chan<-Word, wg *sync.WaitGroup) {
 func processWords(ttsClient *texttospeech.Client, ttsConfig *TTSConfig, wordChannel <-chan Word, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	rateLimiter := rate.NewLimiter(rate.Limit(ttsConfig.ReqPerSec), int(ttsConfig.ReqPerSec))
+	rateLimiter := rate.NewLimiter(rate.Limit(*ttsConfig.ReqPerSec), int(*ttsConfig.ReqPerSec))
 
 	for word := range wordChannel {
 		rateLimiter.Wait(context.Background())
@@ -212,118 +212,145 @@ func defineFlags() {
 	// Misc
 	flag.Bool("version", false, "Print dictpress-tts version")
 	flag.String("file", "./config.toml", "Path to dictpress TOML file")
+	flag.Int("workers", 1, "Number of TTS workers")
+}
+
+func ParseRuntimeFlags() Config {
+	var config Config
+
+	flag.Visit(func(arg *flag.Flag) {
+		switch arg.Name {
+			case "file":
+				config.File = ptr(arg.Value.String())
+
+			case "version":
+				printVersion, _ := strconv.ParseBool(arg.Value.String())
+				config.Version = &printVersion
+			
+			case "workers":
+				workers, _ := strconv.ParseInt(arg.Value.String(), 10, 64)
+				config.Workers = &workers
+		}
+	})
+
+	if (config.File == nil) {
+		config.File = &flag.Lookup("file").DefValue
+	}
+
+	if (config.Workers == nil) {
+		workers, _ := strconv.ParseInt(flag.Lookup("workers").DefValue, 10, 64)
+		config.Workers = &workers
+	}
+
+	if (config.Version == nil) {
+		showVersion, _ := strconv.ParseBool(flag.Lookup("version").DefValue)
+		config.Version = &showVersion
+	}
+
+	return config
 }
 
 func resolveConfig(config *Config) {
 	flag.Visit(func(arg *flag.Flag) {
 		switch arg.Name {
 		case "db-host":
-			config.DB.Host = arg.Value.String()
+			config.DB.Host = ptr(arg.Value.String())
 
 		case "db-port":
-			port, err := strconv.Atoi(arg.Value.String())
-			if err == nil && port > 0 {
-				config.DB.Port = port
-			}
+			port, _ := strconv.Atoi(arg.Value.String())
+			config.DB.Port = &port
 
 		case "db-name":
-			config.DB.Database = arg.Value.String()
+			config.DB.Database = ptr(arg.Value.String())
 
 		case "db-user":
-			config.DB.Username = arg.Value.String()
+			config.DB.Username = ptr(arg.Value.String())
 
 		case "db-pass":
-			config.DB.Password = arg.Value.String()
+			config.DB.Password = ptr(arg.Value.String())
 
 		case "tts-provider":
-			config.TTS.Provider = arg.Value.String()
+			config.TTS.Provider = ptr(arg.Value.String())
 
 		case "tts-api-key":
-			config.TTS.APIKey = arg.Value.String()
+			config.TTS.APIKey = ptr(arg.Value.String())
 
 		case "tts-lang":
-			config.TTS.LanguageCode = arg.Value.String()
+			config.TTS.LanguageCode = ptr(arg.Value.String())
 
 		case "tts-voice":
-			config.TTS.VoiceName = arg.Value.String()
+			config.TTS.VoiceName = ptr(arg.Value.String())
 
 		case "tts-format":
-			config.TTS.OutputFormat = arg.Value.String()
+			config.TTS.OutputFormat = ptr(arg.Value.String())
 
 		case "tts-out-dir":
-			config.TTS.OutDir = arg.Value.String()
+			config.TTS.OutDir = ptr(arg.Value.String())
 
 		case "tts-rate-limit":
-			limit, err := strconv.ParseFloat(arg.Value.String(), 64)
-			if err == nil && limit > 0 {
-				config.TTS.ReqPerSec = limit
-			}
+			limit, _ := strconv.ParseFloat(arg.Value.String(), 64)
+			config.TTS.ReqPerSec = &limit
 
 		case "tts-speed":
-			speed, err := strconv.ParseFloat(arg.Value.String(), 64)
-			if err == nil && speed > 0 {
-				config.TTS.SpeechRate = speed
-			}
+			speed, _ := strconv.ParseFloat(arg.Value.String(), 64)
+			config.TTS.SpeechRate = &speed
 
 		case "tts-pitch":
-			pitch, err := strconv.ParseFloat(arg.Value.String(), 64)
-			if err == nil {
-				config.TTS.Pitch = pitch
-			}
+			pitch, _ := strconv.ParseFloat(arg.Value.String(), 64)
+			config.TTS.Pitch = &pitch
 
 		case "tts-volume":
-			vol, err := strconv.ParseFloat(arg.Value.String(), 64)
-			if err == nil {
-				config.TTS.VolumeGainDB = vol
-			}
+			vol, _ := strconv.ParseFloat(arg.Value.String(), 64)
+			config.TTS.VolumeGainDB = &vol
 		}
 	})
 
-	if config.TTS.Provider == "" {
-		config.TTS.Provider = flag.Lookup("tts-provider").DefValue
+	if config.TTS.Provider == nil {
+		config.TTS.Provider = &flag.Lookup("tts-provider").DefValue
 	}
 
-	if config.TTS.OutputFormat == "" {
-		config.TTS.OutputFormat = flag.Lookup("tts-format").DefValue
+	if config.TTS.OutputFormat == nil {
+		config.TTS.OutputFormat = &flag.Lookup("tts-format").DefValue
 	}
 
-	if config.TTS.OutDir == "" {
-		config.TTS.OutDir = flag.Lookup("tts-out-dir").DefValue
+	if config.TTS.OutDir == nil {
+		config.TTS.OutDir = &flag.Lookup("tts-out-dir").DefValue
 	}
 
-	if config.TTS.ReqPerSec == 0 {
-		config.TTS.OutDir = flag.Lookup("tts-rate-limit").DefValue
+	if config.TTS.ReqPerSec == nil {
+		config.TTS.OutDir = &flag.Lookup("tts-rate-limit").DefValue
 	}
 
-	if config.TTS.SpeechRate == 0 {
-		config.TTS.SpeechRate, _ = strconv.ParseFloat(flag.Lookup("tts-speed").DefValue, 64)
+	if config.TTS.SpeechRate == nil {
+		speed, _ := strconv.ParseFloat(flag.Lookup("tts-speed").DefValue, 64)
+		config.TTS.SpeechRate = &speed
 	}
 }
 
 func initApp() (Config, *sql.DB, *texttospeech.Client) {
 	flag.Parse()
 
-	printVersion, err := strconv.ParseBool(flag.Lookup("version").Value.String())
-
-	if err == nil && printVersion {
+	var config Config = ParseRuntimeFlags()
+	
+	if *config.Version {
 		fmt.Println("dictpress-tts", Version)
 		os.Exit(0)
 	}
-
+	
 	// parser toml
-	config := ParseTomlConf(flag.Lookup("file").Value.String())
+	ParseTomlConf(&config)
 
 	// merge toml and cli config
 	resolveConfig(&config)
 
 	// create TTS Client
-	ttsClient, err := CreateTTSClient(context.Background(), &config.TTS)
+	ttsClient, err := CreateTTSClient(context.Background(), config.TTS)
 	if err != nil {
 		logger.Fatalf("failed to create text-to-speech client: %v\n", err)
 	}
 
 	// connect to postgres
-	dbURI := fmt.Sprintf("postgres://%s:%d/%s", config.DB.Host, config.DB.Port, config.DB.Database)
+	dbURI := fmt.Sprintf("postgres://%s:%d/%s", *config.DB.Host, *config.DB.Port, *config.DB.Database)
 
 	db, err := sql.Open("pgx", dbURI)
 	if err != nil {
@@ -338,19 +365,19 @@ func initApp() (Config, *sql.DB, *texttospeech.Client) {
 	logger.Printf("connected to DB: %s\n", dbURI)
 
 	// init out dir
-	if config.TTS.OutDir != "." {
-		err := os.Mkdir(config.TTS.OutDir, 0777)
+	if *config.TTS.OutDir != "." {
+		err := os.Mkdir(*config.TTS.OutDir, 0777)
 
 		if err != nil {
 			if !os.IsExist(err) {
 				logger.Fatalf("failed to create out dir: %s", err)
 			}
 
-			logger.Printf("out dir: \"%s\" exists, skipping creation", config.TTS.OutDir)
+			logger.Printf("out dir: \"%s\" exists, skipping creation", *config.TTS.OutDir)
 		}
 	}
 
-	printConfig(config.TTS)
+	printConfig(*config.TTS)
 
 	return config, db, ttsClient
 }
@@ -391,7 +418,7 @@ func main() {
 	wg.Add(2)
 	
 	go fetchWordsFromDB(db, wordChannel, &wg)
-	go processWords(ttsClient, &config.TTS, wordChannel, &wg)
+	go processWords(ttsClient, config.TTS, wordChannel, &wg)
 
 	wg.Wait()
 }
