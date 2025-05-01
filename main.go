@@ -189,10 +189,7 @@ func processWords(ttsClient *texttospeech.Client, ttsConfig *TTSConfig, wordChan
 	}
 }
 
-func parseCLIArgs() {
-	// toml config
-	flag.String("file", "./config.toml", "Path to dictpress TOML file")
-
+func defineFlags() {
 	// Database Config
 	flag.String("db-host", "", "PostgreSQL host")
 	flag.Int("db-port", 0, "PostgreSQL port")
@@ -212,7 +209,9 @@ func parseCLIArgs() {
 	flag.Float64("tts-pitch", 0.0, "TTS pitch in dB")
 	flag.Float64("tts-volume", 0.0, "TTS volume gain in dB")
 
-	flag.Parse()
+	// Misc
+	flag.Bool("version", false, "Print dictpress-tts version")
+	flag.String("file", "./config.toml", "Path to dictpress TOML file")
 }
 
 func resolveConfig(config *Config) {
@@ -302,11 +301,14 @@ func resolveConfig(config *Config) {
 }
 
 func initApp() (Config, *sql.DB, *texttospeech.Client) {
-	// init logger
-	logger = log.New(os.Stdout, "dictpress-tts: ", log.Ltime)
+	flag.Parse()
 
-	// parse CLI flags
-	parseCLIArgs()
+	printVersion, err := strconv.ParseBool(flag.Lookup("version").Value.String())
+
+	if err == nil && printVersion {
+		fmt.Println("dictpress-tts", Version)
+		os.Exit(0)
+	}
 
 	// parser toml
 	config := ParseTomlConf(flag.Lookup("file").Value.String())
@@ -351,6 +353,11 @@ func initApp() (Config, *sql.DB, *texttospeech.Client) {
 	printConfig(config.TTS)
 
 	return config, db, ttsClient
+}
+
+func init() {
+	logger = log.New(os.Stdout, "dictpress-tts: ", log.Ltime)
+	defineFlags()
 }
 
 func printConfig(cfg any) {

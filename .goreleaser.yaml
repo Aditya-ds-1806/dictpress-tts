@@ -11,6 +11,9 @@ builds:
     env:
       - CGO_ENABLED=0
 
+    ldflags:
+      - "-X main.AppVersion={{.Version}}"
+
     targets:
       - linux_amd64
       - darwin_amd64
