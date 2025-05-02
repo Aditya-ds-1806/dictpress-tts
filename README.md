@@ -121,3 +121,13 @@ $ dictpress-tts --file /path/to/config.toml
 ```
 
 This will create a `tts` folder and start writing `.mp3` audio files. Depending on the API rate limits and the size of the data, it may take a few minutes to a few hours to finish building the corpus.
+
+---
+
+## Running MacOS Binaries
+
+On MacOS, Gatekeeper might prevent you from executing the binary. To prevent Gatekeeper from interfering, `com.apple.quarantine` attribute needs to be removed.
+
+```bash
+$ xattr -rd com.apple.quarantine ./dictpress-tts
+```
