@@ -14,42 +14,13 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/time/rate"
 
-	texttospeech "cloud.google.com/go/texttospeech/apiv1"
-	"cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
 	"github.com/knadh/koanf"
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/file"
-	"google.golang.org/api/option"
+
+	"dictpress-tts/providers"
+	"dictpress-tts/types"
 )
-
-type DBConfig struct {
-	Host      *string `koanf:"host"`
-	Port      *int    `koanf:"port"`
-	Database  *string `koanf:"db"`
-	Username  *string `koanf:"user"`
-	Password  *string `koanf:"password"`
-}
-
-type TTSConfig struct {
-    Provider      *string  `koanf:"provider"`
-    APIKey        *string  `koanf:"api_key"`
-    LanguageCode  *string  `koanf:"language_code"`
-    VoiceName     *string  `koanf:"voice_name"`
-    OutputFormat  *string  `koanf:"output_format"`
-    OutDir        *string  `koanf:"out_dir"`
-    ReqPerSec     *float64 `koanf:"req_per_sec"`
-    SpeechRate    *float64 `koanf:"speech_rate"`
-    Pitch         *float64 `koanf:"pitch"`
-    VolumeGainDB  *float64 `koanf:"volume_gain_db"`
-}
-
-type Config struct {
-	TTS *TTSConfig
-	DB *DBConfig
-	Version *bool
-	File *string
-	Workers *int64
-}
 
 type Word struct {
 	ID int
@@ -65,14 +36,6 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
-func CreateTTSClient(ctx context.Context, config* TTSConfig) (*texttospeech.Client, error) {
-	if config.APIKey == nil {
-		logger.Fatalf("API key is required!")
-	}
-
-	return texttospeech.NewClient(ctx, option.WithAPIKey(*config.APIKey))
-}
-
 func WriteToFile(filename string, data []byte) error {
 	file, err := os.Create(filename)
 	if err != nil {
@@ -85,37 +48,17 @@ func WriteToFile(filename string, data []byte) error {
 	return err
 }
 
-func PerformTTS(client *texttospeech.Client, text string, ttsConfig* TTSConfig) (*texttospeechpb.SynthesizeSpeechResponse, error) {
-	req := texttospeechpb.SynthesizeSpeechRequest{
-		Input: &texttospeechpb.SynthesisInput{
-			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
-		},
-		Voice: &texttospeechpb.VoiceSelectionParams{
-			Name: *ttsConfig.VoiceName,
-			LanguageCode: *ttsConfig.LanguageCode,
-		},
-		AudioConfig: &texttospeechpb.AudioConfig{
-			AudioEncoding: texttospeechpb.AudioEncoding_MP3,
-			SpeakingRate: *ttsConfig.SpeechRate,
-			Pitch: *ttsConfig.Pitch,
-			VolumeGainDb: *ttsConfig.VolumeGainDB,
-		},
-	}
+func PerformTTSAndWriteToFile(word string, filename string, ttsConfig *types.TTSConfig) (*string, error) {
+	provider := providers.TTSAdapter{TTSConfig: ttsConfig}
 
-	res, err := client.SynthesizeSpeech(context.Background(), &req)
-
-	return res, err
-}
-
-func PerformTTSAndSaveToFile(client *texttospeech.Client, word string, filename string, ttsConfig* TTSConfig) (*string, error) {
-	res, err := PerformTTS(client, word, ttsConfig)
+	bytes, err := provider.PerformTTS(word)
 	if err != nil {
 		return nil, err
 	}
 
 	filePath := fmt.Sprintf("%s/%s.%s", *ttsConfig.OutDir, filename, *ttsConfig.OutputFormat)
 
-	err = WriteToFile(filePath, res.AudioContent)
+	err = WriteToFile(filePath, bytes)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +66,7 @@ func PerformTTSAndSaveToFile(client *texttospeech.Client, word string, filename 
 	return &filePath, nil
 }
 
-func ParseTomlConf(config *Config) {
+func ParseTomlConf(config *types.Config) {
 	k := koanf.New(".")
 	err := k.Load(file.Provider(*config.File), toml.Parser())
 
@@ -172,7 +115,7 @@ func fetchWordsFromDB(db *sql.DB, wordChannel chan<-Word, wg *sync.WaitGroup) {
 	close(wordChannel)
 }
 
-func processWords(ttsClient *texttospeech.Client, config *Config, wordChannel <-chan Word, wg *sync.WaitGroup) {
+func processWords(config *types.Config, wordChannel <-chan Word, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	ttsConfig := config.TTS
@@ -182,7 +125,7 @@ func processWords(ttsClient *texttospeech.Client, config *Config, wordChannel <-
 	for word := range wordChannel {
 		rateLimiter.Wait(context.Background())
 
-		filepath, err := PerformTTSAndSaveToFile(ttsClient, word.Word, strconv.Itoa(word.ID), ttsConfig)
+		filepath, err := PerformTTSAndWriteToFile(word.Word, strconv.Itoa(word.ID), ttsConfig)
 		if (err != nil) {
 			logger.Printf("❌ failed to perform TTS on word %s: %s\n", word.Word, err)
 		} else {
@@ -217,8 +160,8 @@ func defineFlags() {
 	flag.Int("workers", 1, "Number of concurrent TTS processing workers")
 }
 
-func ParseRuntimeFlags() Config {
-	var config Config
+func ParseRuntimeFlags() types.Config {
+	var config types.Config
 
 	flag.Visit(func(arg *flag.Flag) {
 		switch arg.Name {
@@ -252,7 +195,7 @@ func ParseRuntimeFlags() Config {
 	return config
 }
 
-func resolveConfig(config *Config) {
+func resolveConfig(config *types.Config) {
 	flag.Visit(func(arg *flag.Flag) {
 		switch arg.Name {
 		case "db-host":
@@ -329,10 +272,10 @@ func resolveConfig(config *Config) {
 	}
 }
 
-func initApp() (Config, *sql.DB, *texttospeech.Client) {
+func initApp() (types.Config, *sql.DB) {
 	flag.Parse()
 
-	var config Config = ParseRuntimeFlags()
+	var config types.Config = ParseRuntimeFlags()
 	
 	if *config.Version {
 		fmt.Println("dictpress-tts", Version)
@@ -344,12 +287,6 @@ func initApp() (Config, *sql.DB, *texttospeech.Client) {
 
 	// merge toml and cli config
 	resolveConfig(&config)
-
-	// create TTS Client
-	ttsClient, err := CreateTTSClient(context.Background(), config.TTS)
-	if err != nil {
-		logger.Fatalf("failed to create text-to-speech client: %v\n", err)
-	}
 
 	// connect to postgres
 	dbURI := fmt.Sprintf("postgres://%s:%d/%s", *config.DB.Host, *config.DB.Port, *config.DB.Database)
@@ -381,7 +318,7 @@ func initApp() (Config, *sql.DB, *texttospeech.Client) {
 
 	printConfig(*config.TTS)
 
-	return config, db, ttsClient
+	return config, db
 }
 
 func init() {
@@ -409,10 +346,9 @@ func printConfig(cfg any) {
 }
 
 func main() {
-	config, db, ttsClient := initApp()
+	config, db := initApp()
 
 	defer db.Close()
-	defer ttsClient.Close()
 
 	var wg sync.WaitGroup
 	wordChannel := make(chan Word, chBufferSize)
@@ -422,7 +358,7 @@ func main() {
 
 	for range *config.Workers {
 		wg.Add(1)
-		go processWords(ttsClient, &config, wordChannel, &wg)
+		go processWords(&config, wordChannel, &wg)
 	}
 
 	wg.Wait()
