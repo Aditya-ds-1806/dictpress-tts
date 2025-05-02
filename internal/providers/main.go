@@ -1,7 +1,7 @@
 package providers
 
 import (
-	"dictpress-tts/types"
+	types "dictpress-tts/internal/config"
 	"fmt"
 )
 

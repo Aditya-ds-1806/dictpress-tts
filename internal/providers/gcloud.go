@@ -8,7 +8,7 @@ import (
 	"cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
 	"google.golang.org/api/option"
 
-	"dictpress-tts/types"
+	types "dictpress-tts/internal/config"
 )
 
 type GCloudProvider struct{

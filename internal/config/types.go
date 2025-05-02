@@ -1,4 +1,4 @@
-package types
+package config
 
 type DBConfig struct {
 	Host      *string `koanf:"host"`
