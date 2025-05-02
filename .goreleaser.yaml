@@ -14,7 +14,7 @@ builds:
       - CGO_ENABLED=0
 
     ldflags:
-      - "-s -w -X main.Version={{.Version}}"
+      - "-s -w -X main.Version=v{{.Version}}"
 
     targets:
       - linux_amd64
