@@ -17,7 +17,7 @@ import (
 )
 
 type Word struct {
-	ID int
+	ID   int
 	Word string
 }
 
@@ -42,7 +42,6 @@ func PerformTTSAndWriteToFile(word string, filename string, ttsConfig *types.TTS
 
 	bytes, err := provider.PerformTTS(word)
 	if err != nil {
-		
 		return nil, err
 	}
 
@@ -56,7 +55,7 @@ func PerformTTSAndWriteToFile(word string, filename string, ttsConfig *types.TTS
 	return &filePath, nil
 }
 
-func fetchWordsFromDB(db *sql.DB, wordChannel chan<-Word, wg *sync.WaitGroup) {
+func fetchWordsFromDB(db *sql.DB, wordChannel chan<- Word, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	rows, err := db.Query("SELECT id, content FROM entries WHERE initial != '' ORDER BY id")
@@ -67,8 +66,8 @@ func fetchWordsFromDB(db *sql.DB, wordChannel chan<-Word, wg *sync.WaitGroup) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var id int;
-		var word string;
+		var id int
+		var word string
 
 		err := rows.Scan(&id, &word)
 		if err != nil {
@@ -95,7 +94,7 @@ func processWords(config *types.Config, wordChannel <-chan Word, wg *sync.WaitGr
 		rateLimiter.Wait(context.Background())
 
 		filepath, err := PerformTTSAndWriteToFile(word.Word, strconv.Itoa(word.ID), ttsConfig)
-		if (err != nil) {
+		if err != nil {
 			logger.Logger.Printf("❌ failed to perform TTS on word %s: %s\n", word.Word, err)
 		} else {
 			logger.Logger.Printf("✅ performed TTS on word %s: %s\n", word.Word, *filepath)
@@ -105,7 +104,7 @@ func processWords(config *types.Config, wordChannel <-chan Word, wg *sync.WaitGr
 
 func initApp() (types.Config, *sql.DB) {
 	flagConfig := ParseFlagConf()
-	
+
 	if flagConfig != nil && *flagConfig.Version {
 		fmt.Println("dictpress-tts", Version)
 		os.Exit(0)
@@ -159,7 +158,7 @@ func main() {
 
 	var wg sync.WaitGroup
 	wordChannel := make(chan Word, chBufferSize)
-	
+
 	wg.Add(1)
 	go fetchWordsFromDB(db, wordChannel, &wg)
 

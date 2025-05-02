@@ -11,3 +11,7 @@ run:
 distcheck:
 	make build
 	./dictpress-tts --help
+
+lint:
+	gofmt -s -w .
+	golangci-lint run

@@ -1,0 +1,50 @@
+run:
+  timeout: 2m
+  tests: true  # include test files
+  skip-dirs:
+    - vendor
+    - assets
+    - dist
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - gofmt
+    - goimports
+    - ineffassign
+    - revive
+    - typecheck
+    - unused
+    - asciicheck
+
+linters-settings:
+  gofmt:
+    simplify: true
+
+  revive:
+    ignore-generated-header: true
+    severity: warning
+    rules:
+      - name: blank-imports
+        severity: error
+      - name: dot-imports
+        severity: error
+      - name: indent-error-flow
+        severity: warning
+      - name: error-naming
+        severity: warning
+      - name: var-naming
+        severity: warning
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+  exclude-use-default: false

@@ -40,10 +40,10 @@ func defineFlags() {
 
 func ParseFlagConf() *cfg.Config {
 	var config = cfg.Config{
-		DB: &cfg.DBConfig{},
-		TTS: &cfg.TTSConfig{},
+		DB:      &cfg.DBConfig{},
+		TTS:     &cfg.TTSConfig{},
 		Version: ptr(false),
-		File: ptr(cfg.DefaultTomlFilePath),
+		File:    ptr(cfg.DefaultTomlFilePath),
 		Workers: ptr(cfg.DefaultWorkersCount),
 	}
 
@@ -107,7 +107,7 @@ func ParseFlagConf() *cfg.Config {
 		case "version":
 			printVersion, _ := strconv.ParseBool(arg.Value.String())
 			config.Version = &printVersion
-		
+
 		case "workers":
 			workers, _ := strconv.ParseInt(arg.Value.String(), 10, 64)
 			config.Workers = &workers
@@ -122,11 +122,11 @@ func ParseTomlConf(tomlPath string) *cfg.Config {
 		File: ptr("./config.toml"),
 		TTS: &cfg.TTSConfig{
 			OutputFormat: ptr(cfg.DefaultOutputFormat),
-			OutDir: ptr(cfg.DefaultOutDir),
-			Provider: ptr(cfg.DefaultTTSProvider),
-			ReqPerSec: ptr(cfg.DefaultTTSRateLimit),
-			SpeechRate: ptr(cfg.DefaultTTSSpeed),
-			Pitch: ptr(cfg.DefaultTTSPitch),
+			OutDir:       ptr(cfg.DefaultOutDir),
+			Provider:     ptr(cfg.DefaultTTSProvider),
+			ReqPerSec:    ptr(cfg.DefaultTTSRateLimit),
+			SpeechRate:   ptr(cfg.DefaultTTSSpeed),
+			Pitch:        ptr(cfg.DefaultTTSPitch),
 			VolumeGainDB: ptr(cfg.DefaultTTSVolumeGainDB),
 		},
 	}
@@ -135,24 +135,23 @@ func ParseTomlConf(tomlPath string) *cfg.Config {
 	err := k.Load(file.Provider(tomlPath), toml.Parser())
 
 	if err != nil {
-		logger.Logger.Fatalf("failed to load config.toml: %s", err);
+		logger.Logger.Fatalf("failed to load config.toml: %s", err)
 	}
 
 	logger.Logger.Printf("loaded TOML from: %s", tomlPath)
 
 	err = k.Unmarshal("tts", &config.TTS)
 	if err != nil {
-		logger.Logger.Fatalf("failed to parse [tts] from config.toml: %s", err);
+		logger.Logger.Fatalf("failed to parse [tts] from config.toml: %s", err)
 	}
 
 	err = k.Unmarshal("db", &config.DB)
 	if err != nil {
-		logger.Logger.Fatalf("failed to parse [db] from config.toml: %s", err);
+		logger.Logger.Fatalf("failed to parse [db] from config.toml: %s", err)
 	}
 
 	return &config
 }
-
 
 func mergeStructs(base any, override any) {
 	baseVal := reflect.ValueOf(base).Elem()

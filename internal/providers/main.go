@@ -5,11 +5,11 @@ import (
 	"fmt"
 )
 
-type TTSProvider interface{
+type TTSProvider interface {
 	PerformTTS(text string) ([]byte, error)
 }
 
-type TTSAdapter struct{
+type TTSAdapter struct {
 	TTSConfig *types.TTSConfig
 }
 

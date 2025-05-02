@@ -11,7 +11,7 @@ import (
 	types "dictpress-tts/internal/config"
 )
 
-type GCloudProvider struct{
+type GCloudProvider struct {
 	Config *types.TTSConfig
 	client *texttospeech.Client
 }
@@ -39,14 +39,14 @@ func (g *GCloudProvider) PerformTTS(text string) ([]byte, error) {
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
 		},
 		Voice: &texttospeechpb.VoiceSelectionParams{
-			Name: *g.Config.VoiceName,
+			Name:         *g.Config.VoiceName,
 			LanguageCode: *g.Config.LanguageCode,
 		},
 		AudioConfig: &texttospeechpb.AudioConfig{
 			AudioEncoding: texttospeechpb.AudioEncoding_MP3,
-			SpeakingRate: *g.Config.SpeechRate,
-			Pitch: *g.Config.Pitch,
-			VolumeGainDb: *g.Config.VolumeGainDB,
+			SpeakingRate:  *g.Config.SpeechRate,
+			Pitch:         *g.Config.Pitch,
+			VolumeGainDb:  *g.Config.VolumeGainDB,
 		},
 	}
 
