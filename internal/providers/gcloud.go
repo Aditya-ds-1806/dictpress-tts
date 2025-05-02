@@ -11,12 +11,12 @@ import (
 	types "dictpress-tts/internal/config"
 )
 
-type GCloudProvider struct {
+type gCloudProvider struct {
 	Config *types.TTSConfig
 	client *texttospeech.Client
 }
 
-func (g *GCloudProvider) createTTSClient() (*texttospeech.Client, error) {
+func (g *gCloudProvider) createTTSClient() (*texttospeech.Client, error) {
 	if g.Config.APIKey == nil {
 		return nil, fmt.Errorf("api key is required")
 	}
@@ -24,7 +24,7 @@ func (g *GCloudProvider) createTTSClient() (*texttospeech.Client, error) {
 	return texttospeech.NewClient(context.Background(), option.WithAPIKey(*g.Config.APIKey))
 }
 
-func (g *GCloudProvider) PerformTTS(text string) ([]byte, error) {
+func (g *gCloudProvider) PerformTTS(text string) ([]byte, error) {
 	if g.client == nil {
 		client, err := g.createTTSClient()
 		if err != nil {
@@ -58,3 +58,9 @@ func (g *GCloudProvider) PerformTTS(text string) ([]byte, error) {
 
 	return nil, err
 }
+
+func (g *gCloudProvider) Close() error {
+	return g.client.Close()
+}
+
+var GCloudProvider = &gCloudProvider{}

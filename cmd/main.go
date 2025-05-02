@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -37,22 +38,18 @@ func WriteToFile(filename string, data []byte) error {
 	return err
 }
 
-func PerformTTSAndWriteToFile(word string, filename string, ttsConfig *types.TTSConfig) (*string, error) {
-	provider := providers.TTSAdapter{TTSConfig: ttsConfig}
-
+func PerformTTSAndWriteToFile(provider *providers.TTSAdapter, word string, filepath string) error {
 	bytes, err := provider.PerformTTS(word)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	filePath := fmt.Sprintf("%s/%s.%s", *ttsConfig.OutDir, filename, *ttsConfig.OutputFormat)
-
-	err = WriteToFile(filePath, bytes)
+	err = WriteToFile(filepath, bytes)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &filePath, nil
+	return nil
 }
 
 func fetchWordsFromDB(db *sql.DB, wordChannel chan<- Word, wg *sync.WaitGroup) {
@@ -83,26 +80,26 @@ func fetchWordsFromDB(db *sql.DB, wordChannel chan<- Word, wg *sync.WaitGroup) {
 	close(wordChannel)
 }
 
-func processWords(config *types.Config, wordChannel <-chan Word, wg *sync.WaitGroup) {
+func processWords(provider *providers.TTSAdapter, rateLimit float64, filepathTemplate string, wordChannel <-chan Word, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	ttsConfig := config.TTS
-	reqPerSec := *ttsConfig.ReqPerSec / float64(*config.Workers)
-	rateLimiter := rate.NewLimiter(rate.Limit(reqPerSec), int(reqPerSec))
+	rateLimiter := rate.NewLimiter(rate.Limit(rateLimit), int(rateLimit))
 
 	for word := range wordChannel {
 		rateLimiter.Wait(context.Background())
 
-		filepath, err := PerformTTSAndWriteToFile(word.Word, strconv.Itoa(word.ID), ttsConfig)
+		filepath := strings.Replace(filepathTemplate, "{}", strconv.Itoa(word.ID), -1)
+
+		err := PerformTTSAndWriteToFile(provider, word.Word, filepath)
 		if err != nil {
 			logger.Logger.Printf("❌ failed to perform TTS on word %s: %s\n", word.Word, err)
 		} else {
-			logger.Logger.Printf("✅ performed TTS on word %s: %s\n", word.Word, *filepath)
+			logger.Logger.Printf("✅ performed TTS on word %s: %s\n", word.Word, filepath)
 		}
 	}
 }
 
-func initApp() (types.Config, *sql.DB) {
+func initApp() (types.Config, *sql.DB, *providers.TTSAdapter) {
 	flagConfig := ParseFlagConf()
 
 	if flagConfig != nil && *flagConfig.Version {
@@ -142,9 +139,11 @@ func initApp() (types.Config, *sql.DB) {
 		}
 	}
 
+	provider := providers.TTSAdapter{TTSConfig: config.TTS}
+
 	printConfig(*config.TTS)
 
-	return *config, db
+	return *config, db, &provider
 }
 
 func init() {
@@ -152,19 +151,23 @@ func init() {
 }
 
 func main() {
-	config, db := initApp()
+	config, db, provider := initApp()
 
 	defer db.Close()
+	defer provider.Close()
 
 	var wg sync.WaitGroup
 	wordChannel := make(chan Word, chBufferSize)
+
+	rateLimit := *config.TTS.ReqPerSec / float64(*config.Workers)
+	filepathTemplate := fmt.Sprintf("%s/{}.%s", *config.TTS.OutDir, *config.TTS.OutputFormat)
 
 	wg.Add(1)
 	go fetchWordsFromDB(db, wordChannel, &wg)
 
 	for range *config.Workers {
 		wg.Add(1)
-		go processWords(&config, wordChannel, &wg)
+		go processWords(provider, rateLimit, filepathTemplate, wordChannel, &wg)
 	}
 
 	wg.Wait()
