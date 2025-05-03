@@ -53,6 +53,8 @@ export PATH="$PATH:$(pwd)"
 
 ## Usage
 
+![dictpress-tts demo](./assets/dictpress-tts.gif)
+
 ```text
 $ dictpress-tts --help
 
