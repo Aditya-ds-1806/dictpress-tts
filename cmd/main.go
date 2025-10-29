@@ -4,171 +4,196 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/knadh/koanf"
 	"golang.org/x/time/rate"
 
-	types "dictpress-tts/internal/config"
-	"dictpress-tts/internal/logger"
-	"dictpress-tts/internal/providers"
+	"dictpress-tts/internal/providers/google"
 )
 
+var (
+	buildString = "dev"
+	ko          = koanf.New(".")
+	lo          = log.New(os.Stdout, "dictpress-tts: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+)
+
+// Config represents the app config.
+type Config struct {
+	DB      DBConfig  `koanf:"db"`
+	TTS     TTSConfig `koanf:"tts"`
+	Workers int       `koanf:"workers"`
+}
+
+// DBConfig represents DB config.
+type DBConfig struct {
+	Host     string `koanf:"host"`
+	Port     int    `koanf:"port"`
+	Database string `koanf:"db"`
+	Username string `koanf:"user"`
+	Password string `koanf:"password"`
+}
+
+// TTSConfig represents the backend TTS provider config.
+type TTSConfig struct {
+	Provider     string  `koanf:"provider"`
+	APIKey       string  `koanf:"api_key"`
+	LanguageCode string  `koanf:"language_code"`
+	VoiceName    string  `koanf:"voice_name"`
+	OutputFormat string  `koanf:"output_format"`
+	OutDir       string  `koanf:"out_dir"`
+	ReqPerSec    float64 `koanf:"req_per_sec"`
+	SpeechRate   float64 `koanf:"speech_rate"`
+	Pitch        float64 `koanf:"pitch"`
+	VolumeGainDB float64 `koanf:"volume_gain_db"`
+}
+
+// Word represents a word entry from the dictpress database.
 type Word struct {
 	ID   int
 	Word string
 }
 
-var (
-	chBufferSize = 1000
-)
-
-func WriteToFile(filename string, data []byte) error {
-	file, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = file.Write(data)
-
-	return err
+// TTSProvider is the interface for multiple backend TTS providers.
+type TTSProvider interface {
+	PerformTTS(ctx context.Context, text string) ([]byte, error)
+	Close() error
 }
 
-func PerformTTSAndWriteToFile(provider *providers.TTSAdapter, word string, filepath string) error {
-	bytes, err := provider.PerformTTS(word)
+// fetchWords reads words from the database and sends them to the channel.
+func fetchWords(ctx context.Context, srcLang string, db *sql.DB, wordCh chan<- Word) {
+	defer close(wordCh)
+
+	// Fetch words for a specific language, or all languages, from the DB.
+	rows, err := db.QueryContext(ctx, "SELECT id, content FROM entries WHERE initial != '' AND (CASE WHEN $1 != '' THEN lang=$1 ELSE TRUE END) ORDER BY id", srcLang)
 	if err != nil {
-		return err
+		lo.Fatalf("failed to fetch rows: %w", err)
 	}
-
-	err = WriteToFile(filepath, bytes)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func fetchWordsFromDB(db *sql.DB, wordChannel chan<- Word, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	rows, err := db.Query("SELECT id, content FROM entries WHERE initial != '' ORDER BY id")
-	if err != nil {
-		logger.Logger.Fatalf("failed to fetch rows: %s", err)
-	}
-
 	defer rows.Close()
 
 	for rows.Next() {
-		var id int
-		var word string
+		var w Word
+		if err := rows.Scan(&w.ID, &w.Word); err != nil {
+			lo.Printf("failed to scan row: %v", err)
+			continue
+		}
+		wordCh <- w
+	}
 
-		err := rows.Scan(&id, &word)
-		if err != nil {
-			logger.Logger.Printf("failed to scan row")
+	if err := rows.Err(); err != nil {
+		lo.Fatalf("error iterating rows: %w", err)
+	}
+
+	lo.Println("finished reading all words from DB")
+}
+
+// processWords processes words from the channel and generates TTS audio.
+func processWords(ctx context.Context, provider TTSProvider, rateLimit float64, outputTemplate string, wordCh <-chan Word, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	limiter := rate.NewLimiter(rate.Limit(rateLimit), int(rateLimit))
+
+	for word := range wordCh {
+		if err := limiter.Wait(ctx); err != nil {
+			lo.Printf("rate limiter error: %v", err)
 			continue
 		}
 
-		wordChannel <- Word{id, word}
-	}
+		filepath := strings.Replace(outputTemplate, "{}", strconv.Itoa(word.ID), 1)
 
-	logger.Logger.Println("finished reading all words from DB, closing channel!")
-
-	close(wordChannel)
-}
-
-func processWords(provider *providers.TTSAdapter, rateLimit float64, filepathTemplate string, wordChannel <-chan Word, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	rateLimiter := rate.NewLimiter(rate.Limit(rateLimit), int(rateLimit))
-
-	for word := range wordChannel {
-		rateLimiter.Wait(context.Background())
-
-		filepath := strings.Replace(filepathTemplate, "{}", strconv.Itoa(word.ID), -1)
-
-		err := PerformTTSAndWriteToFile(provider, word.Word, filepath)
+		audioData, err := provider.PerformTTS(ctx, word.Word)
 		if err != nil {
-			logger.Logger.Printf("❌ failed to perform TTS on word %s: %s\n", word.Word, err)
-		} else {
-			logger.Logger.Printf("✅ performed TTS on word %s: %s\n", word.Word, filepath)
+			lo.Printf("❌ failed to synthesize '%s': %v", word.Word, err)
+			continue
 		}
-	}
-}
 
-func initApp() (types.Config, *sql.DB, *providers.TTSAdapter) {
-	flagConfig := ParseFlagConf()
-
-	if flagConfig != nil && *flagConfig.Version {
-		fmt.Println("dictpress-tts", Version)
-		os.Exit(0)
-	}
-
-	config := ParseTomlConf(*flagConfig.File)
-
-	mergeStructs(config, flagConfig)
-
-	// connect to postgres
-	dbURI := fmt.Sprintf("postgres://%s:%d/%s", *config.DB.Host, *config.DB.Port, *config.DB.Database)
-
-	db, err := sql.Open("pgx", dbURI)
-	if err != nil {
-		logger.Logger.Fatalf("failed to create db client: %s", err)
-	}
-
-	err = db.Ping()
-	if err != nil {
-		logger.Logger.Fatalf("failed to connect to DB: %s", err)
-	}
-
-	logger.Logger.Printf("connected to DB: %s\n", dbURI)
-
-	// init out dir
-	if *config.TTS.OutDir != "." {
-		err := os.Mkdir(*config.TTS.OutDir, 0777)
-
-		if err != nil {
-			if !os.IsExist(err) {
-				logger.Logger.Fatalf("failed to create out dir: %s", err)
-			}
-
-			logger.Logger.Printf("out dir: \"%s\" exists, skipping creation", *config.TTS.OutDir)
+		if err := os.WriteFile(filepath, audioData, 0644); err != nil {
+			lo.Printf("❌ failed to write file '%s': %v", filepath, err)
+			continue
 		}
+
+		lo.Printf("✅ '%s' -> %s", word.Word, filepath)
 	}
-
-	provider := providers.TTSAdapter{TTSConfig: config.TTS}
-
-	printConfig(*config.TTS)
-
-	return *config, db, &provider
-}
-
-func init() {
-	defineFlags()
 }
 
 func main() {
-	config, db, provider := initApp()
+	// Initialize commandline flags.
+	initFlags(ko)
 
+	// Display version.
+	if ko.Bool("version") {
+		fmt.Println(buildString)
+		os.Exit(0)
+	}
+
+	// Initialize config.
+	cfg := initConfig(ko)
+
+	lo.Printf("loaded config from: %s", ko.Strings("config"))
+	lo.Printf("TTS provider: %s, language: %s, voice: %s", cfg.TTS.Provider, cfg.TTS.LanguageCode, cfg.TTS.VoiceName)
+	lo.Printf("output: %s/*.%s, workers: %d, rate: %.0f req/s", cfg.TTS.OutDir, cfg.TTS.OutputFormat, cfg.Workers, cfg.TTS.ReqPerSec)
+
+	// Connect to database.
+	db, err := connectDB(cfg.DB)
+	if err != nil {
+		lo.Fatalf("database error: %v", err)
+	}
 	defer db.Close()
+	lo.Printf("connected to database: %s:%d/%s", cfg.DB.Host, cfg.DB.Port, cfg.DB.Database)
+
+	// Create output directory.
+	if err := createOutputDir(cfg.TTS.OutDir); err != nil {
+		lo.Fatalf("output directory error: %v", err)
+	}
+
+	// Initialize TTS provider.
+	ctx := context.Background()
+	var provider TTSProvider
+	switch cfg.TTS.Provider {
+	case "google":
+		googleCfg := google.TTSConfig{
+			Provider:     cfg.TTS.Provider,
+			APIKey:       cfg.TTS.APIKey,
+			LanguageCode: cfg.TTS.LanguageCode,
+			VoiceName:    cfg.TTS.VoiceName,
+			OutputFormat: cfg.TTS.OutputFormat,
+			OutDir:       cfg.TTS.OutDir,
+			ReqPerSec:    cfg.TTS.ReqPerSec,
+			SpeechRate:   cfg.TTS.SpeechRate,
+			Pitch:        cfg.TTS.Pitch,
+			VolumeGainDB: cfg.TTS.VolumeGainDB,
+		}
+		provider, err = google.NewProvider(ctx, googleCfg)
+		if err != nil {
+			lo.Fatalf("failed to create TTS provider: %v", err)
+		}
+	default:
+		lo.Fatalf("unsupported TTS provider: %s", cfg.TTS.Provider)
+	}
 	defer provider.Close()
 
 	var wg sync.WaitGroup
-	wordChannel := make(chan Word, chBufferSize)
+	wordCh := make(chan Word, 10000)
 
-	rateLimit := *config.TTS.ReqPerSec / float64(*config.Workers)
-	filepathTemplate := fmt.Sprintf("%s/{}.%s", *config.TTS.OutDir, *config.TTS.OutputFormat)
+	perWorkerRate := cfg.TTS.ReqPerSec / float64(cfg.Workers)
+	outputTemplate := fmt.Sprintf("%s/{}.%s", cfg.TTS.OutDir, cfg.TTS.OutputFormat)
 
-	wg.Add(1)
-	go fetchWordsFromDB(db, wordChannel, &wg)
+	// Start the word fetch worker to feed the queue in batches.
+	go fetchWords(ctx, "english", db, wordCh)
 
-	for range *config.Workers {
+	// Setup worker pool.
+	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
-		go processWords(provider, rateLimit, filepathTemplate, wordChannel, &wg)
+		go processWords(ctx, provider, perWorkerRate, outputTemplate, wordCh, &wg)
 	}
 
+	// Wait for all workers to complete.
 	wg.Wait()
+
+	lo.Println("all workers finished")
 }

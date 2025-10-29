@@ -1,4 +1,38 @@
-# This is a TOML configuration file that extends the dictpress TOML configuration.
+[app]
+workers = 1
+
+
+[tts]
+# TTS provider. Options: "google", "aws", "azure", "coqui"
+provider = "google"
+
+# API key for the TTS provider
+api_key = ""
+
+# Language code for the TTS provider. For example, "en-US" for English (US), "kn-IN" for Kannada (India)
+language_code = "kn-IN"
+
+# Voice name for the TTS provider. For example, "en-US-Wavenet-D" for Google TTS
+voice_name = "kn-IN-Standard-A"
+
+# Output format of the audio file. Options: "mp3", "ogg_opus", "linear16"
+output_format = "mp3"
+
+# Directory to save the generated audio files
+out_dir = "tts"
+
+# Rate limit
+req_per_sec = 10
+
+# Speech rate
+speech_rate = 0.85
+
+# Pitch
+pitch = 0
+
+# Volume Gain (DB)
+volume_gain_db = 0
+
 
 [db]
 host = "localhost"
@@ -6,25 +40,3 @@ port = 9432
 db = "alar"
 user = ""
 password = ""
-
-[tts]
-# TTS provider. Options: "google", "aws", "azure", "coqui"
-provider = "google"
-# API key for the TTS provider
-api_key = ""
-# Language code for the TTS provider. For example, "en-US" for English (US), "kn-IN" for Kannada (India)
-language_code = "kn-IN"
-# Voice name for the TTS provider. For example, "en-US-Wavenet-D" for Google TTS
-voice_name = "kn-IN-Standard-A"
-# Output format of the audio file. Options: "mp3", "ogg_vorbis", "ogg_opus", "wav"
-output_format = "mp3"
-# Directory to save the generated audio files
-out_dir = "tts"
-# Rate limit
-req_per_sec = 10
-# Speech rate
-speech_rate = 0.85
-# Pitch
-pitch = 0
-# Volume Gain (DB)
-volume_gain_db = 0
