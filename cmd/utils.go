@@ -58,22 +58,29 @@ func initConfig(ko *koanf.Koanf) *Config {
 		lo.Fatalf("failed to unmarshal config from %s: %v", key, err)
 	}
 
-	if err := ko.Unmarshal("db", &cfg.DB); err != nil {
-		lo.Fatalf("failed to unmarshal config: %v", err)
-	}
-
 	return cfg
 }
 
 // connectDB establishes a connection to PostgreSQL.
-func connectDB(cfg DBConfig) (*sql.DB, error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
-		cfg.Username, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
+func connectDB(ko *koanf.Koanf) (*sql.DB, error) {
+	// Build DSN.
+	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		ko.String("db.user"), ko.String("db.password"), ko.MustString("db.host"),
+		ko.MustInt("db.port"), ko.MustString("db.db"), ko.MustString("db.ssl_mode"))
+
+	// Append optional params as-is if present.
+	if params := ko.String("db.params"); params != "" {
+		dsn = fmt.Sprintf("%s&%s", dsn, params)
+	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create db client: %w", err)
 	}
+
+	// Set connection pool settings.
+	db.SetMaxOpenConns(ko.MustInt("db.max_open"))
+	db.SetMaxIdleConns(ko.MustInt("db.max_idle"))
 
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)

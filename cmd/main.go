@@ -23,19 +23,9 @@ var (
 
 // Config represents the app config.
 type Config struct {
-	DB              DBConfig  `koanf:"db"`
 	TTS             TTSConfig `koanf:"tts"`
 	Workers         int       `koanf:"workers"`
 	TTSProviderName string    `koanf:"tts_provider"`
-}
-
-// DBConfig represents DB config.
-type DBConfig struct {
-	Host     string `koanf:"host"`
-	Port     int    `koanf:"port"`
-	Database string `koanf:"db"`
-	Username string `koanf:"user"`
-	Password string `koanf:"password"`
 }
 
 // TTSConfig represents the backend TTS provider config.
@@ -137,12 +127,12 @@ func main() {
 	lo.Printf("output: %s/*.%s, workers: %d, rate: %.0f req/s", cfg.TTS.OutDir, cfg.TTS.OutputFormat, cfg.Workers, cfg.TTS.ReqPerSec)
 
 	// Connect to database.
-	db, err := connectDB(cfg.DB)
+	db, err := connectDB(ko)
 	if err != nil {
 		lo.Fatalf("database error: %v", err)
 	}
 	defer db.Close()
-	lo.Printf("connected to database: %s:%d/%s", cfg.DB.Host, cfg.DB.Port, cfg.DB.Database)
+	lo.Printf("connected to database: %s:%d/%s", ko.MustString("db.host"), ko.MustInt("db.port"), ko.MustString("db.db"))
 
 	// Create the output directory.
 	if err := createOutputDir(cfg.TTS.OutDir); err != nil {

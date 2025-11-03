@@ -9,8 +9,14 @@ tts_provider = "google"
 host = "localhost"
 port = 9432
 db = "alar"
-user = ""
+user = "alar"
 password = ""
+ssl_mode = "disable"
+max_open = 25
+max_idle = 25
+
+# Optional DSN params. Eg: a=b&c=d
+params = ""
 
 
 # TTS providers.
