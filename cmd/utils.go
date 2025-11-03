@@ -91,7 +91,7 @@ func connectDB(ko *koanf.Koanf) (*sql.DB, error) {
 
 // createOutputDir creates the output directory if it doesn't exist.
 func createOutputDir(dir string) error {
-	if dir == "." {
+	if dir == "." || dir == "" {
 		return nil
 	}
 
