@@ -115,10 +115,8 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 }
 
 // processWords processes words from the channel and generates TTS audio.
-func processWords(ctx context.Context, provider TTSProvider, rateLimit float64, outputTemplate string, wordCh <-chan Word, wg *sync.WaitGroup) {
+func processWords(ctx context.Context, provider TTSProvider, limiter *rate.Limiter, outputTemplate string, wordCh <-chan Word, wg *sync.WaitGroup) {
 	defer wg.Done()
-
-	limiter := rate.NewLimiter(rate.Limit(rateLimit), int(rateLimit))
 
 	for word := range wordCh {
 		// Check if context is cancelled before processing.
@@ -126,9 +124,11 @@ func processWords(ctx context.Context, provider TTSProvider, rateLimit float64, 
 			return
 		}
 
-		if err := limiter.Wait(ctx); err != nil {
-			// Context was cancelled, exit immediately.
-			return
+		// If this provider has rate imiting, wait for the limiter.
+		if limiter != nil {
+			if err := limiter.Wait(ctx); err != nil {
+				return
+			}
 		}
 
 		filepath := strings.Replace(outputTemplate, "{}", strconv.Itoa(word.ID), 1)
@@ -198,7 +198,12 @@ func main() {
 	var wg sync.WaitGroup
 	wordCh := make(chan Word, 10000)
 
-	perWorkerRate := cfg.TTS.ReqPerSec / float64(cfg.Workers)
+	// If a rate limit is set, create a limiter that waits across all workers.
+	var limiter *rate.Limiter
+	if cfg.TTS.ReqPerSec > 0 {
+		limiter = rate.NewLimiter(rate.Limit(cfg.TTS.ReqPerSec), int(cfg.TTS.ReqPerSec))
+	}
+
 	outputTemplate := fmt.Sprintf("%s/{}.%s", cfg.TTS.OutDir, cfg.TTS.OutputFormat)
 
 	// Start the word fetch worker to feed the queue in batches.
@@ -207,7 +212,7 @@ func main() {
 	// Setup worker pool.
 	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
-		go processWords(ctx, provider, perWorkerRate, outputTemplate, wordCh, &wg)
+		go processWords(ctx, provider, limiter, outputTemplate, wordCh, &wg)
 	}
 
 	// Wait for all workers to complete.
