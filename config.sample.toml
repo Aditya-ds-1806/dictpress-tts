@@ -4,6 +4,9 @@ workers = 1
 # TTS provider to use from the [tts.*] options below.
 tts_provider = "google"
 
+# Number of records to fetch from DB in a single shot for processing.
+fetch_batch_size = 10000
+
 # Postgres database.
 [db]
 host = "localhost"

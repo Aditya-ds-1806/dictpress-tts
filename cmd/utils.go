@@ -56,6 +56,7 @@ func initConfig(ko *koanf.Koanf) *Config {
 	cfg := &Config{
 		Workers:         ko.MustInt("app.workers"),
 		TTSProviderName: ko.MustString("app.tts_provider"),
+		FetchBatchSize:  ko.MustInt("app.fetch_batch_size"),
 	}
 
 	// Unmarshal TTS config from provider-specific section.

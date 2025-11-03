@@ -26,6 +26,7 @@ type Config struct {
 	TTS             TTSConfig `koanf:"tts"`
 	Workers         int       `koanf:"workers"`
 	TTSProviderName string    `koanf:"tts_provider"`
+	FetchBatchSize  int       `koanf:"fetch_batch_size"`
 }
 
 // TTSConfig represents the backend TTS provider config.
@@ -53,31 +54,48 @@ type TTSProvider interface {
 	Close() error
 }
 
-// fetchWords reads words from the database and sends them to the channel.
-func fetchWords(ctx context.Context, srcLang string, db *sql.DB, wordCh chan<- Word) {
+// fetchWords reads words from the database in batches and sends them to the channel.
+func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, wordCh chan<- Word) {
 	defer close(wordCh)
 
-	// Fetch words for a specific language, or all languages, from the DB.
-	rows, err := db.QueryContext(ctx, "SELECT id, content FROM entries WHERE initial != '' AND (CASE WHEN $1 != '' THEN lang=$1 ELSE TRUE END) ORDER BY id", srcLang)
-	if err != nil {
-		lo.Fatalf("failed to fetch rows: %w", err)
-	}
-	defer rows.Close()
+	var (
+		lastId = 0
+		n      = 0
+	)
 
-	for rows.Next() {
-		var w Word
-		if err := rows.Scan(&w.ID, &w.Word); err != nil {
-			lo.Printf("failed to scan row: %v", err)
-			continue
+	for {
+		// Fetch words for a specific language, or all languages, from the DB in batches.
+		query := "SELECT id, content FROM entries WHERE initial != '' AND (CASE WHEN $1 != '' THEN lang=$1 ELSE TRUE END) AND id > $2 ORDER BY id LIMIT $3"
+		rows, err := db.QueryContext(ctx, query, srcLang, lastId, batchSize)
+		if err != nil {
+			lo.Fatalf("failed to fetch rows: %w", err)
 		}
-		wordCh <- w
+
+		for rows.Next() {
+			var w Word
+			if err := rows.Scan(&w.ID, &w.Word); err != nil {
+				lo.Printf("failed to scan row: %v", err)
+				continue
+			}
+			wordCh <- w
+			lastId = w.ID
+			n++
+		}
+		rows.Close()
+
+		if err := rows.Err(); err != nil {
+			lo.Fatalf("error iterating rows: %v", err)
+		}
+
+		lo.Printf("fetched %d words from DB", n)
+
+		// Got 0 rows, all records have been read.
+		if n == 0 {
+			break
+		}
 	}
 
-	if err := rows.Err(); err != nil {
-		lo.Fatalf("error iterating rows: %w", err)
-	}
-
-	lo.Println("finished reading all words from DB")
+	lo.Printf("fetched total %d words from DB", n)
 }
 
 // processWords processes words from the channel and generates TTS audio.
@@ -154,7 +172,7 @@ func main() {
 	outputTemplate := fmt.Sprintf("%s/{}.%s", cfg.TTS.OutDir, cfg.TTS.OutputFormat)
 
 	// Start the word fetch worker to feed the queue in batches.
-	go fetchWords(ctx, "english", db, wordCh)
+	go fetchWords(ctx, "english", db, cfg.FetchBatchSize, wordCh)
 
 	// Setup worker pool.
 	for i := 0; i < cfg.Workers; i++ {
