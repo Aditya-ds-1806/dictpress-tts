@@ -172,7 +172,7 @@ func main() {
 	outputTemplate := fmt.Sprintf("%s/{}.%s", cfg.TTS.OutDir, cfg.TTS.OutputFormat)
 
 	// Start the word fetch worker to feed the queue in batches.
-	go fetchWords(ctx, "english", db, cfg.FetchBatchSize, wordCh)
+	go fetchWords(ctx, ko.String("lang"), db, cfg.FetchBatchSize, wordCh)
 
 	// Setup worker pool.
 	for i := 0; i < cfg.Workers; i++ {

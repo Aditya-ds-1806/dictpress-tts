@@ -29,6 +29,7 @@ func initFlags(ko *koanf.Koanf) {
 	f.StringSlice("config", []string{"config.toml"}, "path to one or more config files (will be merged in order)")
 	f.Bool("version", false, "show current version of the build")
 	f.String("tts-provider", "", "TTS provider to use (overrides config file)")
+	f.String("lang", "", "language to filter words from database (empty for all languages)")
 	if err := f.Parse(os.Args[1:]); err != nil {
 		lo.Fatalf("error loading flags: %v", err)
 	}
