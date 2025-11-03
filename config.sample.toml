@@ -1,5 +1,5 @@
 [app]
-workers = 1
+workers = 10
 
 # TTS provider to use from the [tts.*] options below.
 tts_provider = "google"

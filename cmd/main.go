@@ -21,6 +21,10 @@ var (
 	buildString = "dev"
 	ko          = koanf.New(".")
 	lo          = log.New(os.Stdout, "dictpress-tts: ", log.Ldate|log.Ltime|log.Lmicroseconds|log.Lshortfile)
+
+	// Track last processed ID of the word across workers.
+	mut    sync.Mutex
+	lastID int
 )
 
 // Config represents the app config.
@@ -57,12 +61,11 @@ type TTSProvider interface {
 }
 
 // fetchWords reads words from the database in batches and sends them to the channel.
-func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, wordCh chan<- Word) {
+func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, lastId int, wordCh chan<- Word) {
 	defer close(wordCh)
 
 	var (
-		lastId = 0
-		n      = 0
+		n = 0
 	)
 
 	for {
@@ -81,6 +84,7 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 			break
 		}
 
+		has := false
 		for rows.Next() {
 			var w Word
 			if err := rows.Scan(&w.ID, &w.Word); err != nil {
@@ -90,6 +94,7 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 			wordCh <- w
 			lastId = w.ID
 			n++
+			has = true
 		}
 		rows.Close()
 
@@ -101,7 +106,7 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 		lo.Printf("fetched %d words from DB", n)
 
 		// Got 0 rows, all records have been read.
-		if n == 0 {
+		if !has {
 			break
 		}
 	}
@@ -130,16 +135,23 @@ func processWords(ctx context.Context, provider TTSProvider, rateLimit float64, 
 
 		audioData, err := provider.PerformTTS(ctx, word.Word)
 		if err != nil {
-			lo.Printf("❌ failed to synthesize '%s': %v", word.Word, err)
+			lo.Printf("❌ error synthesizing '%s': %v", word.Word, err)
 			continue
 		}
 
 		if err := os.WriteFile(filepath, audioData, 0644); err != nil {
-			lo.Printf("❌ failed to write file '%s': %v", filepath, err)
+			lo.Printf("❌ error writing file '%s': %v", filepath, err)
 			continue
 		}
 
-		lo.Printf("✅ '%s' -> %s", word.Word, filepath)
+		// Update global last processed ID.
+		mut.Lock()
+		if word.ID > lastID {
+			lastID = word.ID
+		}
+		mut.Unlock()
+
+		lo.Printf("✅ %d: '%s' -> %s", word.ID, word.Word, filepath)
 	}
 }
 
@@ -190,7 +202,7 @@ func main() {
 	outputTemplate := fmt.Sprintf("%s/{}.%s", cfg.TTS.OutDir, cfg.TTS.OutputFormat)
 
 	// Start the word fetch worker to feed the queue in batches.
-	go fetchWords(ctx, ko.String("lang"), db, cfg.FetchBatchSize, wordCh)
+	go fetchWords(ctx, ko.String("lang"), db, cfg.FetchBatchSize, ko.Int("last-id"), wordCh)
 
 	// Setup worker pool.
 	for i := 0; i < cfg.Workers; i++ {
@@ -201,5 +213,11 @@ func main() {
 	// Wait for all workers to complete.
 	wg.Wait()
 
-	lo.Printf("ending (cancelled=%v)", ctx.Err() != nil)
+	// Print the last processed ID for resumption.
+	mut.Lock()
+	lastProcessedId := lastID
+	mut.Unlock()
+
+	lo.Printf("last processed ID: %d (resume with --last-id=%d)", lastProcessedId, lastProcessedId)
+	lo.Printf("finished (cancelled=%v)", ctx.Err() != nil)
 }
