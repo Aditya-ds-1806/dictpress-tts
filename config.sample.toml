@@ -10,10 +10,10 @@ fetch_batch_size = 10000
 # Postgres database.
 [db]
 host = "localhost"
-port = 9432
-db = "alar"
-user = "alar"
-password = ""
+port = 5432
+db = "dictpress"
+user = "dictpress"
+password = "dictpress"
 ssl_mode = "disable"
 max_open = 25
 max_idle = 25
@@ -25,7 +25,7 @@ params = ""
 # TTS providers.
 [tts.google]
 # API key for the TTS provider
-api_key = ""
+api_key = "your_key_here"
 
 # Language code for the TTS provider. For example, "en-US" for English (US), "kn-IN" for Kannada (India)
 language_code = "kn-IN"

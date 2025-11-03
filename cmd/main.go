@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/knadh/koanf"
@@ -64,11 +66,19 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 	)
 
 	for {
+		select {
+		case <-ctx.Done():
+			lo.Printf("cancelled")
+			return
+		default:
+		}
+
 		// Fetch words for a specific language, or all languages, from the DB in batches.
 		query := "SELECT id, content FROM entries WHERE initial != '' AND (CASE WHEN $1 != '' THEN lang=$1 ELSE TRUE END) AND id > $2 ORDER BY id LIMIT $3"
 		rows, err := db.QueryContext(ctx, query, srcLang, lastId, batchSize)
 		if err != nil {
-			lo.Fatalf("failed to fetch rows: %w", err)
+			lo.Printf("failed to fetch rows: %v", err)
+			break
 		}
 
 		for rows.Next() {
@@ -84,7 +94,8 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 		rows.Close()
 
 		if err := rows.Err(); err != nil {
-			lo.Fatalf("error iterating rows: %v", err)
+			lo.Printf("error iterating rows: %v", err)
+			break
 		}
 
 		lo.Printf("fetched %d words from DB", n)
@@ -105,9 +116,14 @@ func processWords(ctx context.Context, provider TTSProvider, rateLimit float64, 
 	limiter := rate.NewLimiter(rate.Limit(rateLimit), int(rateLimit))
 
 	for word := range wordCh {
+		// Check if context is cancelled before processing.
+		if ctx.Err() != nil {
+			return
+		}
+
 		if err := limiter.Wait(ctx); err != nil {
-			lo.Printf("rate limiter error: %v", err)
-			continue
+			// Context was cancelled, exit immediately.
+			return
 		}
 
 		filepath := strings.Replace(outputTemplate, "{}", strconv.Itoa(word.ID), 1)
@@ -157,8 +173,10 @@ func main() {
 		lo.Fatalf("output directory error: %v", err)
 	}
 
-	// Initialize TTS provider.
-	ctx := context.Background()
+	// Initialize TTS provider with cancellable context for graceful shutdown.
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	provider, err := initProvider(ctx, cfg.TTSProviderName, cfg.TTS)
 	if err != nil {
 		lo.Fatalf("failed to create TTS provider: %v", err)
@@ -183,5 +201,5 @@ func main() {
 	// Wait for all workers to complete.
 	wg.Wait()
 
-	lo.Println("all workers finished")
+	lo.Printf("ending (cancelled=%v)", ctx.Err() != nil)
 }
