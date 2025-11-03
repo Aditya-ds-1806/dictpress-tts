@@ -1,11 +1,20 @@
 [app]
 workers = 1
 
+# TTS provider to use from the [tts.*] options below.
+tts_provider = "google"
 
-[tts]
-# TTS provider. Options: "google", "aws", "azure", "coqui"
-provider = "google"
+# Postgres database.
+[db]
+host = "localhost"
+port = 9432
+db = "alar"
+user = ""
+password = ""
 
+
+# TTS providers.
+[tts.google]
 # API key for the TTS provider
 api_key = ""
 
@@ -32,11 +41,3 @@ pitch = 0
 
 # Volume Gain (DB)
 volume_gain_db = 0
-
-
-[db]
-host = "localhost"
-port = 9432
-db = "alar"
-user = ""
-password = ""

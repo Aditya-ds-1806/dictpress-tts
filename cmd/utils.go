@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -11,6 +12,8 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/posflag"
 	flag "github.com/spf13/pflag"
+
+	"dictpress-tts/internal/providers/google"
 )
 
 // initFlags initializes the commandline flags into the Koanf instance.
@@ -45,11 +48,14 @@ func initConfig(ko *koanf.Koanf) *Config {
 	}
 
 	cfg := &Config{
-		Workers: ko.MustInt("app.workers"),
+		Workers:         ko.MustInt("app.workers"),
+		TTSProviderName: ko.MustString("app.tts_provider"),
 	}
 
-	if err := ko.Unmarshal("tts", &cfg.TTS); err != nil {
-		lo.Fatalf("failed to unmarshal config: %v", err)
+	// Unmarshal TTS config from provider-specific section.
+	key := fmt.Sprintf("tts.%s", cfg.TTSProviderName)
+	if err := ko.Unmarshal(key, &cfg.TTS); err != nil {
+		lo.Fatalf("failed to unmarshal config from %s: %v", key, err)
 	}
 
 	if err := ko.Unmarshal("db", &cfg.DB); err != nil {
@@ -87,4 +93,26 @@ func createOutputDir(dir string) error {
 	}
 
 	return nil
+}
+
+// initProvider initializes the TTS provider based on the provider name.
+func initProvider(ctx context.Context, providerName string, ttsCfg TTSConfig) (TTSProvider, error) {
+	switch providerName {
+	case "google":
+		googleCfg := google.TTSConfig{
+			Provider:     providerName,
+			APIKey:       ttsCfg.APIKey,
+			LanguageCode: ttsCfg.LanguageCode,
+			VoiceName:    ttsCfg.VoiceName,
+			OutputFormat: ttsCfg.OutputFormat,
+			OutDir:       ttsCfg.OutDir,
+			ReqPerSec:    ttsCfg.ReqPerSec,
+			SpeechRate:   ttsCfg.SpeechRate,
+			Pitch:        ttsCfg.Pitch,
+			VolumeGainDB: ttsCfg.VolumeGainDB,
+		}
+		return google.NewProvider(ctx, googleCfg)
+	default:
+		return nil, fmt.Errorf("unsupported TTS provider: %s", providerName)
+	}
 }

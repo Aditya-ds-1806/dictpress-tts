@@ -13,8 +13,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/knadh/koanf"
 	"golang.org/x/time/rate"
-
-	"dictpress-tts/internal/providers/google"
 )
 
 var (
@@ -25,9 +23,10 @@ var (
 
 // Config represents the app config.
 type Config struct {
-	DB      DBConfig  `koanf:"db"`
-	TTS     TTSConfig `koanf:"tts"`
-	Workers int       `koanf:"workers"`
+	DB              DBConfig  `koanf:"db"`
+	TTS             TTSConfig `koanf:"tts"`
+	Workers         int       `koanf:"workers"`
+	TTSProviderName string    `koanf:"tts_provider"`
 }
 
 // DBConfig represents DB config.
@@ -41,7 +40,6 @@ type DBConfig struct {
 
 // TTSConfig represents the backend TTS provider config.
 type TTSConfig struct {
-	Provider     string  `koanf:"provider"`
 	APIKey       string  `koanf:"api_key"`
 	LanguageCode string  `koanf:"language_code"`
 	VoiceName    string  `koanf:"voice_name"`
@@ -135,7 +133,7 @@ func main() {
 	cfg := initConfig(ko)
 
 	lo.Printf("loaded config from: %s", ko.Strings("config"))
-	lo.Printf("TTS provider: %s, language: %s, voice: %s", cfg.TTS.Provider, cfg.TTS.LanguageCode, cfg.TTS.VoiceName)
+	lo.Printf("TTS provider: %s, language: %s, voice: %s", cfg.TTSProviderName, cfg.TTS.LanguageCode, cfg.TTS.VoiceName)
 	lo.Printf("output: %s/*.%s, workers: %d, rate: %.0f req/s", cfg.TTS.OutDir, cfg.TTS.OutputFormat, cfg.Workers, cfg.TTS.ReqPerSec)
 
 	// Connect to database.
@@ -146,34 +144,16 @@ func main() {
 	defer db.Close()
 	lo.Printf("connected to database: %s:%d/%s", cfg.DB.Host, cfg.DB.Port, cfg.DB.Database)
 
-	// Create output directory.
+	// Create the output directory.
 	if err := createOutputDir(cfg.TTS.OutDir); err != nil {
 		lo.Fatalf("output directory error: %v", err)
 	}
 
 	// Initialize TTS provider.
 	ctx := context.Background()
-	var provider TTSProvider
-	switch cfg.TTS.Provider {
-	case "google":
-		googleCfg := google.TTSConfig{
-			Provider:     cfg.TTS.Provider,
-			APIKey:       cfg.TTS.APIKey,
-			LanguageCode: cfg.TTS.LanguageCode,
-			VoiceName:    cfg.TTS.VoiceName,
-			OutputFormat: cfg.TTS.OutputFormat,
-			OutDir:       cfg.TTS.OutDir,
-			ReqPerSec:    cfg.TTS.ReqPerSec,
-			SpeechRate:   cfg.TTS.SpeechRate,
-			Pitch:        cfg.TTS.Pitch,
-			VolumeGainDB: cfg.TTS.VolumeGainDB,
-		}
-		provider, err = google.NewProvider(ctx, googleCfg)
-		if err != nil {
-			lo.Fatalf("failed to create TTS provider: %v", err)
-		}
-	default:
-		lo.Fatalf("unsupported TTS provider: %s", cfg.TTS.Provider)
+	provider, err := initProvider(ctx, cfg.TTSProviderName, cfg.TTS)
+	if err != nil {
+		lo.Fatalf("failed to create TTS provider: %v", err)
 	}
 	defer provider.Close()
 
