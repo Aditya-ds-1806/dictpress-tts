@@ -28,6 +28,7 @@ func initFlags(ko *koanf.Koanf) {
 	// Register the commandline flags.
 	f.StringSlice("config", []string{"config.toml"}, "path to one or more config files (will be merged in order)")
 	f.Bool("version", false, "show current version of the build")
+	f.String("tts-provider", "", "TTS provider to use (overrides config file)")
 	if err := f.Parse(os.Args[1:]); err != nil {
 		lo.Fatalf("error loading flags: %v", err)
 	}
@@ -45,6 +46,11 @@ func initConfig(ko *koanf.Koanf) *Config {
 		if err := ko.Load(file.Provider(f), toml.Parser()); err != nil {
 			log.Fatalf("error reading config: %v", err)
 		}
+	}
+
+	// Override app.tts_provider if the --tts-provider flag is set.
+	if f := ko.String("tts-provider"); f != "" {
+		ko.Set("app.tts_provider", f)
 	}
 
 	cfg := &Config{
