@@ -55,10 +55,20 @@ func (g *Provider) PerformTTS(ctx context.Context, text string) ([]byte, error) 
 		audioEncoding = texttospeechpb.AudioEncoding_LINEAR16
 	}
 
-	req := &texttospeechpb.SynthesizeSpeechRequest{
-		Input: &texttospeechpb.SynthesisInput{
+	// SSML or plain text input?
+	var inputType *texttospeechpb.SynthesisInput
+	if strings.Contains(text, "<?xml") || strings.Contains(text, "<speak>") {
+		inputType = &texttospeechpb.SynthesisInput{
+			InputSource: &texttospeechpb.SynthesisInput_Ssml{Ssml: text},
+		}
+	} else {
+		inputType = &texttospeechpb.SynthesisInput{
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
-		},
+		}
+	}
+
+	req := &texttospeechpb.SynthesizeSpeechRequest{
+		Input: inputType,
 		Voice: &texttospeechpb.VoiceSelectionParams{
 			Name:         g.config.VoiceName,
 			LanguageCode: g.config.LanguageCode,
