@@ -1,16 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
+	"path"
 	"sync"
 	"syscall"
+	"text/template"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/knadh/koanf"
@@ -50,8 +51,9 @@ type TTSConfig struct {
 
 // Word represents a word entry from the dictpress database.
 type Word struct {
-	ID   int
-	Word string
+	ID      int
+	Content string
+	GUID    string
 }
 
 // TTSProvider is the interface for multiple backend TTS providers.
@@ -77,7 +79,7 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 		}
 
 		// Fetch words for a specific language, or all languages, from the DB in batches.
-		query := "SELECT id, content FROM entries WHERE initial != '' AND (CASE WHEN $1 != '' THEN lang=$1 ELSE TRUE END) AND id > $2 ORDER BY id LIMIT $3"
+		query := "SELECT id, guid, content FROM entries WHERE initial != '' AND (CASE WHEN $1 != '' THEN lang=$1 ELSE TRUE END) AND id > $2 ORDER BY id LIMIT $3"
 		rows, err := db.QueryContext(ctx, query, srcLang, lastId, batchSize)
 		if err != nil {
 			lo.Printf("failed to fetch rows: %v", err)
@@ -87,14 +89,14 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 		has := false
 		for rows.Next() {
 			var w Word
-			if err := rows.Scan(&w.ID, &w.Word); err != nil {
+			if err := rows.Scan(&w.ID, &w.GUID, &w.Content); err != nil {
 				lo.Printf("failed to scan row: %v", err)
 				continue
 			}
 			wordCh <- w
 			lastId = w.ID
-			n++
 			has = true
+			n++
 		}
 		rows.Close()
 
@@ -115,7 +117,7 @@ func fetchWords(ctx context.Context, srcLang string, db *sql.DB, batchSize int, 
 }
 
 // processWords processes words from the channel and generates TTS audio.
-func processWords(ctx context.Context, provider TTSProvider, limiter *rate.Limiter, outputTemplate string, wordCh <-chan Word, wg *sync.WaitGroup) {
+func processWords(ctx context.Context, provider TTSProvider, limiter *rate.Limiter, filenameTpl *template.Template, outDir string, wordCh <-chan Word, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for word := range wordCh {
@@ -131,11 +133,17 @@ func processWords(ctx context.Context, provider TTSProvider, limiter *rate.Limit
 			}
 		}
 
-		filepath := strings.Replace(outputTemplate, "{}", strconv.Itoa(word.ID), 1)
+		// Execute the filename template with the word data.
+		var buf bytes.Buffer
+		if err := filenameTpl.Execute(&buf, word); err != nil {
+			lo.Printf("❌ error executing filename template for word %d: %v", word.ID, err)
+			continue
+		}
+		filepath := path.Join(outDir, buf.String())
 
-		audioData, err := provider.PerformTTS(ctx, word.Word)
+		audioData, err := provider.PerformTTS(ctx, word.Content)
 		if err != nil {
-			lo.Printf("❌ error synthesizing '%s': %v", word.Word, err)
+			lo.Printf("❌ error synthesizing '%s': %v", word.Content, err)
 			continue
 		}
 
@@ -151,7 +159,7 @@ func processWords(ctx context.Context, provider TTSProvider, limiter *rate.Limit
 		}
 		mut.Unlock()
 
-		lo.Printf("✅ %d: '%s' -> %s", word.ID, word.Word, filepath)
+		lo.Printf("✅ %d: '%s' -> %s", word.ID, word.Content, filepath)
 	}
 }
 
@@ -204,7 +212,11 @@ func main() {
 		limiter = rate.NewLimiter(rate.Limit(cfg.TTS.ReqPerSec), int(cfg.TTS.ReqPerSec))
 	}
 
-	outputTemplate := fmt.Sprintf("%s/{}.%s", cfg.TTS.OutDir, cfg.TTS.OutputFormat)
+	// Parse the filename template.
+	filenameTpl, err := template.New("filename").Parse(ko.MustString("app.filename_tpl"))
+	if err != nil {
+		lo.Fatalf("failed to parse filename template: %v", err)
+	}
 
 	// Start the word fetch worker to feed the queue in batches.
 	go fetchWords(ctx, ko.String("lang"), db, cfg.FetchBatchSize, ko.Int("last-id"), wordCh)
@@ -212,7 +224,7 @@ func main() {
 	// Setup worker pool.
 	for i := 0; i < cfg.Workers; i++ {
 		wg.Add(1)
-		go processWords(ctx, provider, limiter, outputTemplate, wordCh, &wg)
+		go processWords(ctx, provider, limiter, filenameTpl, cfg.TTS.OutDir, wordCh, &wg)
 	}
 
 	// Wait for all workers to complete.

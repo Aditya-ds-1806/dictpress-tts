@@ -7,6 +7,10 @@ tts_provider = "google"
 # Number of records to fetch from DB in a single shot for processing.
 fetch_batch_size = 10000
 
+# Filename template for generated audio files (Go template syntax).
+# Available fields: .ID, .GUID, .Content (word text)
+filename_tpl = "{{ .ID }}.mp3"
+
 # Postgres database.
 [db]
 host = "localhost"
