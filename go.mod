@@ -6,6 +6,7 @@ require (
 	cloud.google.com/go/texttospeech v1.12.1
 	github.com/jackc/pgx/v5 v5.7.4
 	github.com/knadh/koanf v1.5.0
+	github.com/spf13/pflag v1.0.5
 	golang.org/x/time v0.11.0
 	google.golang.org/api v0.230.0
 )

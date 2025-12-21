@@ -53,48 +53,17 @@ export PATH="$PATH:$(pwd)"
 
 ## Usage
 
+Download the `config.sample.toml`, rename it to `config.toml`, and apply your configuration in it.
+
 ![dictpress-tts demo](./assets/dictpress-tts.gif)
 
 ```text
-$ dictpress-tts --help
-
-Usage of dictpress-tts:
-  -db-host string
-        PostgreSQL host
-  -db-name string
-        Name of the PostgreSQL database
-  -db-pass string
-        PostgreSQL password
-  -db-port int
-        PostgreSQL port
-  -db-user string
-        PostgreSQL username
-  -file string
-        Path to dictpress TOML file (default "./config.toml")
-  -tts-api-key string
-        API key for TTS provider
-  -tts-format string
-        Audio output format (e.g., mp3, wav) (default "mp3")
-  -tts-lang string
-        Language code for TTS (e.g., en-US)
-  -tts-out-dir string
-        Directory to save TTS audio files (default "tts")
-  -tts-pitch float
-        TTS pitch in dB
-  -tts-provider string
-        TTS provider (e.g., google) (default "google")
-  -tts-rate-limit int
-        Max requests per second to the TTS API (default 1000)
-  -tts-speed float
-        TTS speech rate multiplier (default 1)
-  -tts-voice string
-        Voice name to use for TTS
-  -tts-volume float
-        TTS volume gain in dB
-  -version
-        Print dictpress-tts version
-  -workers int
-        Number of concurrent TTS processing workers (default 1)
+$ ./dictpress-tts --help
+      --config strings        path to one or more config files (will be merged in order) (default [config.toml])
+      --lang string           language to filter words from database (empty for all languages)
+      --last-id int           ID to resume from (fetch words with ID > last-id)
+      --tts-provider string   TTS provider to use (overrides config file)
+      --version               show current version of the build
 ```
 
 ---
@@ -104,14 +73,11 @@ Usage of dictpress-tts:
 This is an example with which [Alar's voice corpus](https://github.com/Aditya-ds-1806/Alar-voice-corpus) can be built. Grab your Google TTS API Key and create a `[tts]` block in the dictpress TOML file. The `language_code` and `voice_name` can be obtained from [here](https://cloud.google.com/text-to-speech/docs/list-voices-and-types#list_of_all_supported_languages).
 
 ```toml
-[tts]
-provider = "google"
+[tts.google]
 api_key = "<YOUR-API-KEY-HERE>"
 language_code = "kn-IN"
 voice_name = "kn-IN-Standard-A"
 output_format = "mp3"
-out_dir = "tts"
-req_per_sec = 10 # requests per second, tune it as per the API rate limits
 ```
 
 Make sure your dictpress postgres database is up and running. In case you want to seed the DB with dummy data, you can run the `dump` shell script provided in the repository.
@@ -119,7 +85,7 @@ Make sure your dictpress postgres database is up and running. In case you want t
 ```bash
 $ chod +x ./dump # give permission to run as executable
 $ ./dump 10000 # optional, dumps 10000 dummy rows into postgres entries table
-$ dictpress-tts --file /path/to/config.toml
+$ dictpress-tts --config=path/to/your/config.toml
 ```
 
 This will create a `tts` folder and start writing `.mp3` audio files. Depending on the API rate limits and the size of the data, it may take a few minutes to a few hours to finish building the corpus.
